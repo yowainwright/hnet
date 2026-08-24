@@ -1,0 +1,38 @@
+name: agent-telemetry-edge
+
+services:
+  collector:
+    image: otel/opentelemetry-collector-contrib:0.153.0
+    restart: unless-stopped
+    command:
+      - --config=/etc/otelcol-contrib/config.yaml
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      AGENT_TELEMETRY_UPSTREAM: ${AGENT_TELEMETRY_UPSTREAM}
+      AGENT_TELEMETRY_HOST: ${AGENT_TELEMETRY_HOST}
+      AGENT_TELEMETRY_LOG_DIR: /var/lib/agent-telemetry
+      AGENT_TELEMETRY_QUEUE_DIR: /var/lib/otelcol
+    ports:
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
+    volumes:
+      - ./collector/edge.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - ${AGENT_TELEMETRY_STATE_DIR}:/var/lib/agent-telemetry:ro
+      - collector-edge-data:/var/lib/otelcol
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test:
+        - CMD
+        - /otelcol-contrib
+        - --version
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  collector-edge-data:

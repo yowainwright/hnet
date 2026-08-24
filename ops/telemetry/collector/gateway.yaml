@@ -1,0 +1,134 @@
+extensions:
+  file_storage:
+    directory: /var/lib/otelcol
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 5s
+    limit_mib: 512
+    spike_limit_mib: 128
+  transform/privacy:
+    error_mode: propagate
+    trace_statements:
+      - context: scope
+        statements:
+          - keep_matching_keys(attributes, '^$')
+      - context: resource
+        statements:
+          - >-
+            keep_matching_keys(attributes,
+            '^(service\.name|service\.namespace|service\.version|host\.name|deployment\.environment\.name|telemetry\.sdk\.(name|language|version)|telemetry\.pipeline|app\.version|model|auth_mode|session_source|originator)$')
+      - context: span
+        statements:
+          - set(name, "agent.operation")
+          - >-
+            keep_matching_keys(attributes,
+            '^(event\.name|gen_ai\.(operation\.name|system|provider\.name|request\.model|response\.model|usage\.(input|output)_tokens|conversation\.id)|conversation\.id|session\.id|app\.version|model|auth_mode|session_source|originator|attempt|duration_ms|http\.response\.status_code|event\.kind|(input|output|cached|reasoning|tool)_token_count|prompt_length|tool_name|call_id|decision|success|status|error\.type)$')
+      - context: spanevent
+        statements:
+          - set(name, "agent.event")
+          - >-
+            keep_matching_keys(attributes,
+            '^(event\.name|gen_ai\.(operation\.name|system|provider\.name|request\.model|response\.model|usage\.(input|output)_tokens|conversation\.id)|conversation\.id|session\.id|app\.version|model|duration_ms|event\.kind|(input|output|cached|reasoning|tool)_token_count|tool_name|call_id|decision|success|status|error\.type)$')
+    log_statements:
+      - context: scope
+        statements:
+          - keep_matching_keys(attributes, '^$')
+      - context: resource
+        statements:
+          - >-
+            keep_matching_keys(attributes,
+            '^(service\.name|service\.namespace|service\.version|host\.name|deployment\.environment\.name|telemetry\.sdk\.(name|language|version)|telemetry\.pipeline|app\.version|model|auth_mode|session_source|originator)$')
+      - context: log
+        statements:
+          - set(body, "")
+          - >-
+            keep_matching_keys(attributes,
+            '^(event\.name|gen_ai\.(operation\.name|system|provider\.name|request\.model|response\.model|usage\.(input|output)_tokens|conversation\.id|token\.type)|conversation\.id|session\.id|app\.version|model|auth_mode|session_source|originator|attempt|duration_ms|http\.response\.status_code|event\.kind|(input|output|cached|reasoning|tool)_token_count|prompt_length|tool_name|call_id|decision|success|status|error\.type|shell\.command\.category|shell\.duration_ms|shell\.exit_code|shell\.project)$')
+    metric_statements:
+      - context: scope
+        statements:
+          - keep_matching_keys(attributes, '^$')
+      - context: resource
+        statements:
+          - >-
+            keep_matching_keys(attributes,
+            '^(service\.name|service\.namespace|service\.version|host\.name|deployment\.environment\.name|telemetry\.sdk\.(name|language|version)|telemetry\.pipeline|app\.version|model|auth_mode|session_source|originator)$')
+      - context: datapoint
+        statements:
+          - >-
+            keep_matching_keys(attributes,
+            '^(gen_ai\.(operation\.name|system|provider\.name|request\.model|response\.model|token\.type)|app\.version|model|auth_mode|session_source|originator|status|success|kind|tool|token_type|type|error\.type)$')
+  resource/pipeline:
+    attributes:
+      - key: telemetry.pipeline
+        action: upsert
+        value: hnet
+
+exporters:
+  clickhouse:
+    endpoint: tcp://clickhouse:9000?dial_timeout=10s
+    database: otel
+    username: ${env:CLICKHOUSE_USER}
+    password: ${env:CLICKHOUSE_PASSWORD}
+    ttl: ${env:TELEMETRY_TTL}
+    create_schema: true
+    async_insert: true
+    compress: lz4
+    timeout: 10s
+    sending_queue:
+      enabled: true
+      storage: file_storage
+      num_consumers: 2
+      queue_size: 10000
+      sizer: items
+      batch:
+        min_size: 5000
+        flush_timeout: 5s
+        sizer: items
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 0s
+
+service:
+  extensions:
+    - file_storage
+    - health_check
+  pipelines:
+    logs:
+      receivers:
+        - otlp
+      processors:
+        - memory_limiter
+        - transform/privacy
+        - resource/pipeline
+      exporters:
+        - clickhouse
+    metrics:
+      receivers:
+        - otlp
+      processors:
+        - memory_limiter
+        - transform/privacy
+        - resource/pipeline
+      exporters:
+        - clickhouse
+    traces:
+      receivers:
+        - otlp
+      processors:
+        - memory_limiter
+        - transform/privacy
+        - resource/pipeline
+      exporters:
+        - clickhouse

@@ -1,0 +1,369 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+script_path=${BASH_SOURCE[0]}
+script_parent=${script_path%/*}
+app_dir=$(cd -- "$script_parent" && pwd)
+ops_dir=$(cd -- "$app_dir/../.." && pwd)
+telemetry_dir="$ops_dir/telemetry"
+studio_env=${TELEMETRY_STUDIO_ENV:-}
+edge_env=${TELEMETRY_EDGE_ENV:-}
+docker_bin=${TELEMETRY_DOCKER_BIN:-}
+[[ -n $studio_env ]] || studio_env="$telemetry_dir/.env.mac-studio"
+[[ -n $edge_env ]] || edge_env="$telemetry_dir/.env.edge"
+
+fail() {
+  echo "$1" >&2
+  exit "${2:-1}"
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"
+}
+
+resolve_docker_bin() {
+  local candidate
+  for candidate in "$docker_bin" "$(command -v docker 2>/dev/null || true)" \
+    "$HOME/.orbstack/bin/docker" \
+    /Applications/Docker.app/Contents/Resources/bin/docker; do
+    if [[ -n $candidate && -x $candidate ]]; then
+      printf '%s' "$candidate"
+      return
+    fi
+  done
+  return 1
+}
+
+start_docker_app() {
+  local app_name
+  if [[ -d /Applications/OrbStack.app ]]; then
+    app_name=OrbStack
+  elif [[ -d /Applications/Docker.app ]]; then
+    app_name=Docker
+  else
+    fail "Install OrbStack or Docker Desktop."
+  fi
+  require_command open
+  open -gj -a "$app_name"
+}
+
+docker_ready() {
+  [[ -n $docker_bin ]] && "$docker_bin" info >/dev/null 2>&1
+}
+
+ensure_docker() {
+  local attempt
+  docker_bin=$(resolve_docker_bin || true)
+  docker_ready || start_docker_app
+  for ((attempt = 1; attempt <= 45; attempt++)); do
+    docker_bin=$(resolve_docker_bin || true)
+    docker_ready && return
+    sleep 2
+  done
+  fail "OrbStack or Docker Desktop did not become ready."
+}
+
+docker_command() {
+  [[ -n $docker_bin ]] || ensure_docker
+  "$docker_bin" "$@"
+}
+
+tailscale_command() {
+  local app_cli=/Applications/Tailscale.app/Contents/MacOS/Tailscale
+  if command -v tailscale >/dev/null 2>&1; then
+    command tailscale "$@"
+    return
+  fi
+  [[ -x $app_cli ]] || fail "Missing Tailscale CLI and macOS app."
+  "$app_cli" "$@"
+}
+
+resolved_config_value() {
+  local key=$1 value=$2 current
+  current=${!key:-}
+  if [[ -n $current ]]; then
+    printf '%s' "$current"
+    return
+  fi
+  if [[ $value == op://* ]]; then
+    require_command op
+    op read "$value"
+    return
+  fi
+  printf '%s' "$value"
+}
+
+load_studio_config() {
+  local secret_mode=${1:-resolve}
+  [[ -f $studio_env ]] || fail "Missing $studio_env; copy .env.mac-studio.example first."
+  while IFS='=' read -r key value; do
+    case "$key" in
+    GATEWAY_PORT | GRAFANA_PORT | TAILSCALE_DNS_NAME | GF_SECURITY_ADMIN_USER | TELEMETRY_TTL)
+      value=$(resolved_config_value "$key" "$value")
+      printf -v "$key" '%s' "$value"
+      export "${key?}"
+      ;;
+    GF_SECURITY_ADMIN_PASSWORD | CLICKHOUSE_PASSWORD | GRAFANA_CLICKHOUSE_PASSWORD)
+      [[ $secret_mode == resolve ]] || continue
+      value=$(resolved_config_value "$key" "$value")
+      printf -v "$key" '%s' "$value"
+      export "${key?}"
+      ;;
+    '' | '#'*) ;;
+    *) fail "Unsupported key in $studio_env: $key" ;;
+    esac
+  done <"$studio_env"
+}
+
+valid_port() {
+  [[ $1 =~ ^[0-9]+$ ]] && ((10#$1 >= 1024 && 10#$1 <= 65535))
+}
+
+validate_studio_public_config() {
+  valid_port "${GATEWAY_PORT:-}" || fail "GATEWAY_PORT must be between 1024 and 65535."
+  valid_port "${GRAFANA_PORT:-}" || fail "GRAFANA_PORT must be between 1024 and 65535."
+  [[ $GATEWAY_PORT != "$GRAFANA_PORT" ]] || fail "Gateway and Grafana ports must differ."
+  [[ $GATEWAY_PORT != 4317 && $GATEWAY_PORT != 4318 ]] || fail "Gateway host port must leave 4317 and 4318 available for the edge collector."
+  [[ ${TAILSCALE_DNS_NAME:-} =~ ^[A-Za-z0-9][A-Za-z0-9.-]*\.ts\.net$ ]] || fail "TAILSCALE_DNS_NAME must be a ts.net name."
+  [[ ${GF_SECURITY_ADMIN_USER:-} =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || fail "Grafana administrator name is invalid."
+  [[ ${TELEMETRY_TTL:-} =~ ^[0-9]+[smhd]$ ]] || fail "TELEMETRY_TTL must use s, m, h, or d."
+}
+
+validate_studio_secrets() {
+  local admin_password=${GF_SECURITY_ADMIN_PASSWORD:-}
+  local writer_password=${CLICKHOUSE_PASSWORD:-}
+  local reader_password=${GRAFANA_CLICKHOUSE_PASSWORD:-}
+  [[ ${#admin_password} -ge 24 ]] || fail "Grafana administrator password must be at least 24 characters."
+  [[ ${#writer_password} -ge 24 ]] || fail "ClickHouse writer password must be at least 24 characters."
+  [[ ${#reader_password} -ge 24 ]] || fail "ClickHouse reader password must be at least 24 characters."
+  [[ $writer_password != "$reader_password" ]] || fail "ClickHouse writer and reader passwords must differ."
+}
+
+load_edge_config() {
+  [[ -f $edge_env ]] || fail "Missing $edge_env; copy .env.edge.example first."
+  while IFS='=' read -r key value; do
+    case "$key" in
+    AGENT_TELEMETRY_UPSTREAM | AGENT_TELEMETRY_HOST | AGENT_TELEMETRY_STATE_DIR)
+      value=$(resolved_config_value "$key" "$value")
+      printf -v "$key" '%s' "$value"
+      export "${key?}"
+      ;;
+    '' | '#'*) ;;
+    *) fail "Unsupported key in $edge_env: $key" ;;
+    esac
+  done <"$edge_env"
+}
+
+validate_edge_config() {
+  local upstream_pattern='^https://[A-Za-z0-9][A-Za-z0-9.-]*\.ts\.net:4318$'
+  local label_pattern='^[A-Za-z0-9][A-Za-z0-9._-]*$'
+  [[ ${AGENT_TELEMETRY_UPSTREAM:-} =~ $upstream_pattern ]] || fail "Edge upstream must be the Studio Tailscale HTTPS endpoint on port 4318."
+  [[ ${AGENT_TELEMETRY_HOST:-} =~ $label_pattern ]] || fail "Edge host must be a safe label."
+  [[ ${AGENT_TELEMETRY_STATE_DIR:-} == /* ]] || fail "Edge state directory must be absolute."
+  [[ $AGENT_TELEMETRY_STATE_DIR != *'/../'* && $AGENT_TELEMETRY_STATE_DIR != */.. ]] || fail "Edge state directory cannot contain parent traversal."
+}
+
+load_restic_profile() {
+  local profile=$1 restic_env key value
+  [[ $profile =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || fail "Invalid restic profile."
+  restic_env="$telemetry_dir/.env.restic.$profile"
+  [[ -f $restic_env ]] || fail "Missing restic profile: $profile"
+  while IFS='=' read -r key value; do
+    case "$key" in
+    RESTIC_REPOSITORY | RESTIC_PASSWORD | B2_ACCOUNT_ID | B2_ACCOUNT_KEY)
+      value=$(resolved_config_value "$key" "$value")
+      printf -v "$key" '%s' "$value"
+      export "${key?}"
+      ;;
+    '' | '#'*) ;;
+    *) fail "Unsupported key in restic profile: $key" ;;
+    esac
+  done <"$restic_env"
+}
+
+validate_restic_config() {
+  [[ ${RESTIC_REPOSITORY:-} == sftp:* || ${RESTIC_REPOSITORY:-} == b2:* ]] || fail "Restic repository must use SFTP or B2."
+  [[ ${#RESTIC_PASSWORD} -ge 24 ]] || fail "Restic password must be at least 24 characters."
+}
+
+studio_compose() {
+  docker_command compose --env-file "$studio_env" --project-directory "$telemetry_dir" \
+    -f "$telemetry_dir/compose.mac-studio.yml" "$@"
+}
+
+edge_compose() {
+  docker_command compose --env-file "$edge_env" --project-directory "$telemetry_dir" \
+    -f "$telemetry_dir/compose.edge.yml" "$@"
+}
+
+grafana_health_url() {
+  echo "http://127.0.0.1:$GRAFANA_PORT/api/health"
+}
+
+wait_for_grafana() {
+  local attempt health_url
+  health_url=$(grafana_health_url)
+  for ((attempt = 1; attempt <= 60; attempt++)); do
+    curl --fail --silent --max-time 5 "$health_url" >/dev/null && return
+    sleep 5
+  done
+  fail "Grafana did not become healthy."
+}
+
+studio_preflight() {
+  ensure_docker
+  load_studio_config resolve
+  validate_studio_public_config
+  validate_studio_secrets
+  mkdir -p "$telemetry_dir/backups"
+  studio_compose config --quiet
+}
+
+studio_observe_preflight() {
+  ensure_docker
+  load_studio_config public
+  validate_studio_public_config
+  studio_compose config --quiet
+}
+
+studio_start() {
+  studio_preflight
+  require_command curl
+  studio_compose pull
+  studio_compose up -d
+  wait_for_grafana
+}
+
+studio_serve() {
+  local grafana_target gateway_target health_url
+  studio_observe_preflight
+  require_command curl
+  health_url=$(grafana_health_url)
+  curl --fail --silent --max-time 5 "$health_url" >/dev/null
+  grafana_target="http://127.0.0.1:$GRAFANA_PORT"
+  gateway_target="http://127.0.0.1:$GATEWAY_PORT"
+  tailscale_command serve --yes --bg --https=443 "$grafana_target"
+  tailscale_command serve --yes --bg --https=4318 "$gateway_target"
+  tailscale_command serve status
+}
+
+studio_status() {
+  local health_url
+  studio_observe_preflight
+  require_command curl
+  studio_compose ps
+  health_url=$(grafana_health_url)
+  curl --fail --silent --show-error "$health_url"
+  echo
+  tailscale_command serve status
+}
+
+studio_logs() {
+  local service
+  service=${2:-}
+  [[ $service =~ ^(clickhouse|collector|dashboard-schema|grafana)$ ]] || fail "Invalid service."
+  studio_observe_preflight
+  studio_compose logs --tail 200 "$service"
+}
+
+new_backup_name() {
+  local timestamp
+  timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+  echo "telemetry-$timestamp"
+}
+
+studio_backup() {
+  local name
+  name=${2:-}
+  studio_observe_preflight
+  bash "$telemetry_dir/backup.sh" "$name"
+}
+
+studio_archive() {
+  local profile name backup_path
+  profile=${2:-}
+  name=${3:-}
+  [[ -n $profile ]] || fail "Archive requires a restic profile."
+  [[ -n $name ]] || name=$(new_backup_name)
+  studio_observe_preflight
+  load_restic_profile "$profile"
+  validate_restic_config
+  backup_path="$telemetry_dir/backups/$name"
+  [[ -d $backup_path ]] || bash "$telemetry_dir/backup.sh" "$name"
+  bash "$telemetry_dir/restic-backup.sh" "$name"
+}
+
+restic_init() {
+  local profile
+  profile=${2:-}
+  [[ -n $profile ]] || fail "Restic initialization requires a profile."
+  load_restic_profile "$profile"
+  validate_restic_config
+  require_command restic
+  restic init
+}
+
+edge_preflight() {
+  ensure_docker
+  load_edge_config
+  validate_edge_config
+  mkdir -p "$AGENT_TELEMETRY_STATE_DIR"
+  touch "$AGENT_TELEMETRY_STATE_DIR/zsh.jsonl"
+  chmod 0700 "$AGENT_TELEMETRY_STATE_DIR"
+  chmod 0600 "$AGENT_TELEMETRY_STATE_DIR/zsh.jsonl"
+  edge_compose config --quiet
+}
+
+edge_start() {
+  edge_preflight
+  edge_compose pull
+  edge_compose up -d
+  edge_compose ps
+}
+
+edge_status() {
+  edge_preflight
+  edge_compose ps
+}
+
+edge_logs() {
+  edge_preflight
+  edge_compose logs --tail 200 collector
+}
+
+bootstrap() {
+  studio_start
+  studio_serve
+  edge_start
+}
+
+usage() {
+  echo "Usage: hnetctl COMMAND"
+  echo "Studio: bootstrap, start, serve, status, doctor, restart"
+  echo "Data: logs SERVICE, backup [NAME], archive PROFILE [NAME]"
+  echo "Backup setup: restic-init PROFILE"
+  echo "Edge: edge-start, edge-status, edge-logs"
+}
+
+case "${1:-}" in
+bootstrap) bootstrap ;;
+start) studio_start ;;
+serve) studio_serve ;;
+status | doctor) studio_status ;;
+logs) studio_logs "$@" ;;
+restart)
+  studio_observe_preflight
+  studio_compose restart
+  ;;
+backup) studio_backup "$@" ;;
+archive) studio_archive "$@" ;;
+restic-init) restic_init "$@" ;;
+edge-start) edge_start ;;
+edge-status) edge_status ;;
+edge-logs) edge_logs ;;
+*)
+  usage
+  exit 2
+  ;;
+esac
