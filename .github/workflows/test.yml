@@ -1,0 +1,49 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install shell tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes shellcheck zsh
+
+      - name: Run ShellCheck
+        run: |
+          shellcheck \
+            ops/apps/hnetctl/hnetctl \
+            ops/telemetry/*.sh \
+            ops/telemetry/clickhouse/*.sh
+
+      - name: Check Zsh syntax
+        run: zsh -n ops/clients/zsh/*.zsh
+
+      - name: Validate central Compose configuration
+        run: |
+          docker compose \
+            --env-file ops/telemetry/.env.mac-studio.example \
+            -f ops/telemetry/compose.mac-studio.yml \
+            config --quiet
+
+      - name: Validate edge Compose configuration
+        run: |
+          docker compose \
+            --env-file ops/telemetry/.env.edge.example \
+            -f ops/telemetry/compose.edge.yml \
+            config --quiet
