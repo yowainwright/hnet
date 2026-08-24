@@ -24,15 +24,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes shellcheck zsh
 
-      - name: Run ShellCheck
-        run: |
-          shellcheck \
-            ops/apps/hnetctl/hnetctl \
-            ops/telemetry/*.sh \
-            ops/telemetry/clickhouse/*.sh
+      - name: Run lint
+        run: ./ops/scripts/lint.sh
 
-      - name: Check Zsh syntax
-        run: zsh -n ops/clients/zsh/*.zsh
+      - name: Run tests
+        run: ./tests/test_ops.sh
 
       - name: Validate central Compose configuration
         run: |

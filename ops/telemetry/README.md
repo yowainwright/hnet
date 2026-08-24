@@ -53,15 +53,15 @@ cp ops/telemetry/.env.edge.example ops/telemetry/.env.edge
 ./ops/apps/hnetctl/hnetctl edge-status
 ```
 
-Run `agent-sync global` separately to configure supported agent vendors to emit
-OTLP to the loopback collector.
+Configure supported agent vendors separately to emit OTLP to the loopback
+collector.
 
 ## Zsh client
 
 Source the client after setting an optional safe project label:
 
 ```zsh
-export AGENT_TELEMETRY_PROJECT=agent-sync
+export AGENT_TELEMETRY_PROJECT=example-project
 source /path/to/hnet/ops/clients/zsh/agent-telemetry.zsh
 ```
 
