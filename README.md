@@ -2,15 +2,9 @@
 
 Private home-network infrastructure and observability.
 
-## Ownership
-
-- `hnet` owns collectors, storage, dashboards, deployment, privacy policy, and
-  backup operations.
-- `agent-sync` configures supported agent vendors to emit OTLP locally.
-- `dotfiles` may install or source host-specific clients such as the Zsh client.
-
-No repository contains resolved credentials, private hostnames, IP addresses,
-tailnet names, telemetry payloads, or machine-specific environment files.
+No resolved credentials, private hostnames, IP addresses, tailnet names,
+telemetry payloads, or machine-specific environment files belong in this
+repository.
 
 ## Layout
 
@@ -24,6 +18,7 @@ tailnet names, telemetry payloads, or machine-specific environment files.
 | `ops/telemetry/grafana/` | Provisioned data source and dashboards |
 
 See [ops/telemetry/README.md](./ops/telemetry/README.md) for deployment and operations.
+See [ops/docs/PROJECT.md](./ops/docs/PROJECT.md) for the service flow.
 
 ## Safety
 
@@ -32,24 +27,3 @@ See [ops/telemetry/README.md](./ops/telemetry/README.md) for deployment and oper
 - Bind services to loopback and expose them only through private Tailscale Serve.
 - Preserve the default-deny contract in
   [ops/telemetry/REDACTION.md](./ops/telemetry/REDACTION.md).
-
-## Validation
-
-```bash
-shellcheck \
-  ops/apps/hnetctl/hnetctl \
-  ops/telemetry/*.sh \
-  ops/telemetry/clickhouse/*.sh
-
-zsh -n ops/clients/zsh/*.zsh
-
-docker compose \
-  --env-file ops/telemetry/.env.mac-studio.example \
-  -f ops/telemetry/compose.mac-studio.yml \
-  config --quiet
-
-docker compose \
-  --env-file ops/telemetry/.env.edge.example \
-  -f ops/telemetry/compose.edge.yml \
-  config --quiet
-```
