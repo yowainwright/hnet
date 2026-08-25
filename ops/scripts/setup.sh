@@ -58,7 +58,7 @@ set -eu
 repo_dir=$(git rev-parse --show-toplevel)
 cd "$repo_dir"
 
-git diff --cached --check
+git --no-pager diff --cached --check
 ./ops/scripts/lint.sh --strict
 HOOK
     ;;
@@ -71,7 +71,7 @@ set -eu
 repo_dir=$(git rev-parse --show-toplevel)
 cd "$repo_dir"
 
-./tests/test_ops.sh
+find tests -type f -name '*_test.sh' -exec {} \;
 ./ops/scripts/validate.sh
 HOOK
     ;;
