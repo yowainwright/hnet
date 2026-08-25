@@ -35,10 +35,13 @@ shell_files=(
   ops/telemetry/*.sh
   ops/telemetry/clickhouse/*.sh
   ops/scripts/*.sh
-  tests/*.sh
 )
 
-shellcheck "${shell_files[@]}"
+while IFS= read -r test_file; do
+  shell_files+=("$test_file")
+done < <(find tests -type f -name '*.sh' -print | sort)
+
+shellcheck -x "${shell_files[@]}"
 zsh -n ops/clients/zsh/*.zsh
 
 if command -v shfmt >/dev/null 2>&1; then
