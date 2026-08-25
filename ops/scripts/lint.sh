@@ -6,6 +6,16 @@ script_path=${BASH_SOURCE[0]}
 script_parent=${script_path%/*}
 script_dir=$(cd -- "$script_parent" && pwd)
 repo_dir=$(cd -- "$script_dir/../.." && pwd)
+format_mode=optional
+
+case "${1:-}" in
+'') ;;
+--strict) format_mode=strict ;;
+*)
+  echo "Usage: $0 [--strict]" >&2
+  exit 2
+  ;;
+esac
 
 fail() {
   echo "$1" >&2
@@ -20,10 +30,21 @@ cd "$repo_dir"
 require_command shellcheck
 require_command zsh
 
-shellcheck \
-  ops/apps/hnetctl/hnetctl \
-  ops/telemetry/*.sh \
-  ops/telemetry/clickhouse/*.sh \
-  ops/scripts/*.sh \
+shell_files=(
+  ops/apps/hnetctl/hnetctl
+  ops/telemetry/*.sh
+  ops/telemetry/clickhouse/*.sh
+  ops/scripts/*.sh
   tests/*.sh
+)
+
+shellcheck "${shell_files[@]}"
 zsh -n ops/clients/zsh/*.zsh
+
+if command -v shfmt >/dev/null 2>&1; then
+  shfmt -d "${shell_files[@]}"
+elif [[ $format_mode == strict ]]; then
+  fail "Missing required command: shfmt"
+else
+  echo "Warning: shfmt unavailable; skipping shell formatting." >&2
+fi

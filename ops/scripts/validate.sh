@@ -31,6 +31,9 @@ validate_compose() {
 cd "$repo_dir"
 case "${1:-all}" in
 --fast) validate_shell ;;
-all) validate_shell; validate_compose ;;
+all)
+  validate_shell
+  validate_compose
+  ;;
 *) fail "Usage: $0 [--fast]" 2 ;;
 esac

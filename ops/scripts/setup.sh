@@ -11,7 +11,10 @@ refresh_hooks=false
 case "${1:-}" in
 '') ;;
 --refresh) refresh_hooks=true ;;
-*) echo "Usage: $0 [--refresh]" >&2; exit 2 ;;
+*)
+  echo "Usage: $0 [--refresh]" >&2
+  exit 2
+  ;;
 esac
 
 fail() {
@@ -56,7 +59,7 @@ repo_dir=$(git rev-parse --show-toplevel)
 cd "$repo_dir"
 
 git diff --cached --check
-./ops/scripts/lint.sh
+./ops/scripts/lint.sh --strict
 HOOK
     ;;
   pre-push)

@@ -44,12 +44,17 @@ TOOL
 printf '%s\n' "$@" >> "${OPS_TEST_ZSH_LOG:?}"
 TOOL
 
+  cat >"$fake_bin/shfmt" <<'TOOL'
+#!/bin/sh
+printf '%s\n' "$@" >> "${OPS_TEST_SHFMT_LOG:?}"
+TOOL
+
   cat >"$fake_bin/docker" <<'TOOL'
 #!/bin/sh
 printf '%s\n' "$@" >> "${OPS_TEST_DOCKER_LOG:?}"
 TOOL
 
-  chmod +x "$fake_bin/shellcheck" "$fake_bin/zsh" "$fake_bin/docker"
+  chmod +x "$fake_bin/shellcheck" "$fake_bin/zsh" "$fake_bin/shfmt" "$fake_bin/docker"
 }
 
 test_setup_installs_and_preserves_hooks() {
@@ -71,7 +76,7 @@ test_setup_installs_and_preserves_hooks() {
   [[ -z $hooks_path ]] || fail "Setup configured core.hooksPath unexpectedly."
 
   content=$(<"$hooks_dir/pre-commit")
-  assert_contains "$content" './ops/scripts/lint.sh'
+  assert_contains "$content" './ops/scripts/lint.sh --strict'
   content=$(<"$hooks_dir/pre-push")
   assert_contains "$content" './tests/test_ops.sh'
 
@@ -98,30 +103,38 @@ test_lint_and_validation_wiring() {
   local fake_bin="$test_root/bin"
   local shellcheck_log="$test_root/shellcheck.log"
   local zsh_log="$test_root/zsh.log"
+  local shfmt_log="$test_root/shfmt.log"
   local docker_log="$test_root/docker.log"
-  local shellcheck_args docker_args
+  local shellcheck_args shfmt_args docker_args
   : >"$shellcheck_log"
   : >"$zsh_log"
+  : >"$shfmt_log"
   : >"$docker_log"
 
   PATH="$fake_bin:$PATH" \
     OPS_TEST_SHELLCHECK_LOG="$shellcheck_log" \
     OPS_TEST_ZSH_LOG="$zsh_log" \
-    "$repo_dir/ops/scripts/lint.sh"
+    OPS_TEST_SHFMT_LOG="$shfmt_log" \
+    "$repo_dir/ops/scripts/lint.sh" --strict
   shellcheck_args=$(<"$shellcheck_log")
   assert_contains "$shellcheck_args" 'ops/scripts/lint.sh'
   assert_contains "$shellcheck_args" 'ops/scripts/setup.sh'
   assert_contains "$shellcheck_args" 'tests/test_ops.sh'
+  shfmt_args=$(<"$shfmt_log")
+  assert_contains "$shfmt_args" 'ops/scripts/lint.sh'
+  assert_contains "$shfmt_args" 'tests/test_ops.sh'
 
-  (cd "$repo_dir/ops/telemetry" && \
+  (cd "$repo_dir/ops/telemetry" &&
     PATH="$fake_bin:$PATH" \
-    OPS_TEST_SHELLCHECK_LOG="$shellcheck_log" \
-    OPS_TEST_ZSH_LOG="$zsh_log" \
-    "$repo_dir/ops/scripts/lint.sh")
+      OPS_TEST_SHELLCHECK_LOG="$shellcheck_log" \
+      OPS_TEST_ZSH_LOG="$zsh_log" \
+      OPS_TEST_SHFMT_LOG="$shfmt_log" \
+      "$repo_dir/ops/scripts/lint.sh" --strict)
 
   PATH="$fake_bin:$PATH" \
     OPS_TEST_SHELLCHECK_LOG="$shellcheck_log" \
     OPS_TEST_ZSH_LOG="$zsh_log" \
+    OPS_TEST_SHFMT_LOG="$shfmt_log" \
     OPS_TEST_DOCKER_LOG="$docker_log" \
     "$repo_dir/ops/scripts/validate.sh"
   docker_args=$(<"$docker_log")
@@ -130,6 +143,29 @@ test_lint_and_validation_wiring() {
   assert_contains "$docker_args" 'ops/telemetry/compose.edge.yml'
   assert_contains "$docker_args" 'config'
   assert_contains "$docker_args" '--quiet'
+}
+
+test_lint_formatter_modes() {
+  local no_shfmt_bin="$test_root/no-shfmt-bin"
+  local optional_output
+  mkdir -p "$no_shfmt_bin"
+  ln -s "$test_root/bin/shellcheck" "$no_shfmt_bin/shellcheck"
+  ln -s "$test_root/bin/zsh" "$no_shfmt_bin/zsh"
+
+  if PATH="$no_shfmt_bin:/usr/bin:/bin" \
+    OPS_TEST_SHELLCHECK_LOG="$test_root/shellcheck.log" \
+    OPS_TEST_ZSH_LOG="$test_root/zsh.log" \
+    "$repo_dir/ops/scripts/lint.sh" --strict >/dev/null 2>&1; then
+    fail "Strict lint accepted a missing shfmt."
+  fi
+
+  optional_output=$(
+    PATH="$no_shfmt_bin:/usr/bin:/bin" \
+      OPS_TEST_SHELLCHECK_LOG="$test_root/shellcheck.log" \
+      OPS_TEST_ZSH_LOG="$test_root/zsh.log" \
+      "$repo_dir/ops/scripts/lint.sh" 2>&1
+  )
+  assert_contains "$optional_output" 'shfmt unavailable'
 }
 
 test_hnetctl_resolves_the_ops_telemetry_path() {
@@ -150,6 +186,7 @@ make_fake_tools
 test_setup_installs_and_preserves_hooks
 test_commit_message_hook
 test_lint_and_validation_wiring
+test_lint_formatter_modes
 test_hnetctl_resolves_the_ops_telemetry_path
 
 echo "Ops tests passed."
