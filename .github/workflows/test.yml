@@ -28,7 +28,7 @@ jobs:
         run: ./ops/scripts/lint.sh
 
       - name: Run tests
-        run: ./tests/test_ops.sh
+        run: find tests -type f -name '*_test.sh' -exec {} \;
 
       - name: Validate central Compose configuration
         run: |
