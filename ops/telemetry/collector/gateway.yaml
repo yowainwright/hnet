@@ -30,7 +30,7 @@ processors:
         statements:
           - >-
             keep_matching_keys(resource.attributes,
-            "^(service\\.name|service\\.namespace|service\\.version|host\\.name|deployment\\.environment\\.name|telemetry\\.sdk\\.(name|language|version)|telemetry\\.pipeline|app\\.version|model|auth_mode|session_source|originator)$")
+            "^(service\\.name|service\\.namespace|service\\.version|deployment\\.environment\\.name|telemetry\\.sdk\\.(name|language|version)|telemetry\\.pipeline|app\\.version|model|auth_mode|session_source|originator)$")
       - context: span
         statements:
           - set(span.name, "agent.operation")
@@ -51,7 +51,7 @@ processors:
         statements:
           - >-
             keep_matching_keys(resource.attributes,
-            "^(service\\.name|service\\.namespace|service\\.version|host\\.name|deployment\\.environment\\.name|telemetry\\.sdk\\.(name|language|version)|telemetry\\.pipeline|app\\.version|model|auth_mode|session_source|originator)$")
+            "^(service\\.name|service\\.namespace|service\\.version|deployment\\.environment\\.name|telemetry\\.sdk\\.(name|language|version)|telemetry\\.pipeline|app\\.version|model|auth_mode|session_source|originator)$")
       - context: log
         statements:
           - set(body, "")
@@ -66,7 +66,7 @@ processors:
         statements:
           - >-
             keep_matching_keys(resource.attributes,
-            "^(service\\.name|service\\.namespace|service\\.version|host\\.name|deployment\\.environment\\.name|telemetry\\.sdk\\.(name|language|version)|telemetry\\.pipeline|app\\.version|model|auth_mode|session_source|originator)$")
+            "^(service\\.name|service\\.namespace|service\\.version|deployment\\.environment\\.name|telemetry\\.sdk\\.(name|language|version)|telemetry\\.pipeline|app\\.version|model|auth_mode|session_source|originator)$")
       - context: datapoint
         statements:
           - >-
@@ -74,6 +74,9 @@ processors:
             "^(gen_ai\\.(operation\\.name|system|provider\\.name|request\\.model|response\\.model|token\\.type)|app\\.version|model|auth_mode|session_source|originator|status|success|kind|tool|token_type|type|error\\.type)$")
   resource/pipeline:
     attributes:
+      - key: host.name
+        action: upsert
+        value: central-gateway
       - key: telemetry.pipeline
         action: upsert
         value: hnet

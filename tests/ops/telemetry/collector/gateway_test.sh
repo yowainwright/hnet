@@ -11,5 +11,7 @@ fail() {
 
 grep -Fq 'bearertokenauth/server:' "$config_file" || fail "Gateway server authenticator is missing."
 grep -Fq 'authenticator: bearertokenauth/server' "$config_file" || fail "Gateway OTLP HTTP receiver is unauthenticated."
+grep -Fq 'value: central-gateway' "$config_file" || fail "Gateway must assign its own host identity."
+[[ $(grep -Fc 'host.name' "$config_file") -eq 1 ]] || fail "Gateway must not preserve client-supplied host identities."
 
 echo "gateway collector security tests passed."
