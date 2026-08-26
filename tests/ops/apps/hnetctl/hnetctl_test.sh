@@ -22,7 +22,34 @@ test_hnetctl_resolves_the_ops_telemetry_path() {
   assert_contains "$output" "$repo_dir/ops/telemetry/.env.mac-studio"
 }
 
+test_hnetctl_validates_edge_ingest_token() {
+  local edge_env="$test_root/edge.env"
+  local docker_log="$test_root/edge-docker.log"
+  local valid_token=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  local invalid_token=short
+  cat >"$edge_env" <<EOF
+AGENT_TELEMETRY_UPSTREAM=https://studio.example.ts.net:4318
+AGENT_TELEMETRY_HOST=edge-test
+AGENT_TELEMETRY_STATE_DIR=$test_root/state
+AGENT_TELEMETRY_INGEST_TOKEN=$valid_token
+EOF
+
+  TELEMETRY_EDGE_ENV="$edge_env" \
+    TELEMETRY_DOCKER_BIN="$test_root/bin/docker" \
+    OPS_TEST_DOCKER_LOG="$docker_log" \
+    "$repo_dir/ops/apps/hnetctl/hnetctl" edge-status
+
+  sed "s/$valid_token/$invalid_token/" "$edge_env" >"$edge_env.invalid"
+  if TELEMETRY_EDGE_ENV="$edge_env.invalid" \
+    TELEMETRY_DOCKER_BIN="$test_root/bin/docker" \
+    OPS_TEST_DOCKER_LOG="$docker_log" \
+    "$repo_dir/ops/apps/hnetctl/hnetctl" edge-status >/dev/null 2>&1; then
+    fail "Short edge ingest token was accepted."
+  fi
+}
+
 make_fake_tools
 test_hnetctl_resolves_the_ops_telemetry_path
+test_hnetctl_validates_edge_ingest_token
 
 echo "hnetctl tests passed."

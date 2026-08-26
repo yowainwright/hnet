@@ -54,7 +54,8 @@ cp ops/telemetry/.env.edge.example ops/telemetry/.env.edge
 ```
 
 Configure supported agent vendors separately to emit OTLP to the loopback
-collector.
+collector with the `Authorization: Bearer` value from
+`AGENT_TELEMETRY_INGEST_TOKEN`.
 
 ## Zsh client
 
