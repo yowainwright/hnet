@@ -1,7 +1,7 @@
 # Telemetry
 
 Each Mac sends OpenTelemetry data to a loopback collector. The collector applies
-the default-deny policy in [REDACTION.md](./REDACTION.md), queues sanitized data,
+the default-deny policy in the [root README](../../README.md#what-stays-private), queues sanitized data,
 and forwards it through private Tailscale HTTPS to the central Mac. ClickHouse
 stores the signals and Grafana renders the dashboards.
 

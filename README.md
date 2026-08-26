@@ -69,15 +69,23 @@ sequenceDiagram
 
 ## What stays private
 
-<!-- privacy guarantees derived from ops/telemetry/REDACTION.md -->
+<!-- privacy guarantees derived from ops/telemetry/collector/edge.yaml and gateway.yaml -->
 
-Telemetry is default-deny. hnet never stores command contents, terminal output,
-prompts, completions, tool contents, environment variables, paths, account
-identifiers, or request and response bodies.
+Telemetry is default-deny. hnet keeps operational signal while excluding the
+content of private work.
 
-The retained signal is limited to operational facts: service, model, operation,
-duration, status, token counts, versions, host, and an optional safe project
-label. See the [redaction contract](./ops/telemetry/REDACTION.md).
+| Source | Stored signal |
+| --- | --- |
+| Shell | Command category, duration, exit code, safe project label, gateway host identity, timestamp |
+| Agents | Service, model, operation, token counts, session ID, status, safe tool name, duration, app version, gateway host identity, timestamp |
+
+Never stored: command text or output, prompts or completions, tool contents,
+environment variables, paths, account identifiers, exception messages, or
+request and response bodies.
+
+Redaction runs on the Mac and again at the central gateway. A redaction failure
+drops the affected payload, and the gateway replaces client-supplied host
+identities with its own `central-gateway` identity.
 
 ## Access and retention
 
