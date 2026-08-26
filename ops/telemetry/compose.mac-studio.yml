@@ -58,6 +58,7 @@ services:
     environment:
       - CLICKHOUSE_USER=otel_collector
       - CLICKHOUSE_PASSWORD
+      - AGENT_TELEMETRY_INGEST_TOKEN=${AGENT_TELEMETRY_INGEST_TOKEN:?AGENT_TELEMETRY_INGEST_TOKEN is required}
       - TELEMETRY_TTL
     ports:
       - "127.0.0.1:${GATEWAY_PORT:-14318}:4318"
@@ -120,15 +121,7 @@ services:
       - no-new-privileges:true
     environment:
       - GF_AUTH_ANONYMOUS_ENABLED=false
-      - GF_AUTH_PROXY_ENABLED=true
-      - GF_AUTH_PROXY_HEADER_NAME=Tailscale-User-Login
-      - GF_AUTH_PROXY_HEADER_PROPERTY=email
-      - GF_AUTH_PROXY_AUTO_SIGN_UP=true
-      - >-
-        GF_AUTH_PROXY_HEADERS=Name:Tailscale-User-Name
-        Email:Tailscale-User-Login
-      - GF_AUTH_PROXY_HEADERS_ENCODED=true
-      - GF_AUTH_PROXY_ENABLE_LOGIN_TOKEN=true
+      - GF_AUTH_PROXY_ENABLED=false
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_USERS_AUTO_ASSIGN_ORG_ROLE=Viewer
       - GF_SERVER_ROOT_URL=https://${TAILSCALE_DNS_NAME}

@@ -104,7 +104,7 @@ load_studio_config() {
       printf -v "$key" '%s' "$value"
       export "${key?}"
       ;;
-    GF_SECURITY_ADMIN_PASSWORD | CLICKHOUSE_PASSWORD | GRAFANA_CLICKHOUSE_PASSWORD)
+    GF_SECURITY_ADMIN_PASSWORD | CLICKHOUSE_PASSWORD | GRAFANA_CLICKHOUSE_PASSWORD | AGENT_TELEMETRY_INGEST_TOKEN)
       [[ $secret_mode == resolve ]] || continue
       value=$(resolved_config_value "$key" "$value")
       printf -v "$key" '%s' "$value"
@@ -118,6 +118,12 @@ load_studio_config() {
 
 valid_port() {
   [[ $1 =~ ^[0-9]+$ ]] && ((10#$1 >= 1024 && 10#$1 <= 65535))
+}
+
+validate_ingest_token() {
+  local token=$1
+  [[ ${#token} -ge 32 ]] || fail "AGENT_TELEMETRY_INGEST_TOKEN must be at least 32 characters."
+  [[ $token =~ ^[A-Za-z0-9._~-]+$ ]] || fail "AGENT_TELEMETRY_INGEST_TOKEN contains unsupported characters."
 }
 
 validate_studio_public_config() {
@@ -138,13 +144,14 @@ validate_studio_secrets() {
   [[ ${#writer_password} -ge 24 ]] || fail "ClickHouse writer password must be at least 24 characters."
   [[ ${#reader_password} -ge 24 ]] || fail "ClickHouse reader password must be at least 24 characters."
   [[ $writer_password != "$reader_password" ]] || fail "ClickHouse writer and reader passwords must differ."
+  validate_ingest_token "${AGENT_TELEMETRY_INGEST_TOKEN:-}"
 }
 
 load_edge_config() {
   [[ -f $edge_env ]] || fail "Missing $edge_env; copy .env.edge.example first."
   while IFS='=' read -r key value; do
     case "$key" in
-    AGENT_TELEMETRY_UPSTREAM | AGENT_TELEMETRY_HOST | AGENT_TELEMETRY_STATE_DIR)
+    AGENT_TELEMETRY_UPSTREAM | AGENT_TELEMETRY_HOST | AGENT_TELEMETRY_STATE_DIR | AGENT_TELEMETRY_INGEST_TOKEN)
       value=$(resolved_config_value "$key" "$value")
       printf -v "$key" '%s' "$value"
       export "${key?}"
@@ -162,6 +169,7 @@ validate_edge_config() {
   [[ ${AGENT_TELEMETRY_HOST:-} =~ $label_pattern ]] || fail "Edge host must be a safe label."
   [[ ${AGENT_TELEMETRY_STATE_DIR:-} == /* ]] || fail "Edge state directory must be absolute."
   [[ $AGENT_TELEMETRY_STATE_DIR != *'/../'* && $AGENT_TELEMETRY_STATE_DIR != */.. ]] || fail "Edge state directory cannot contain parent traversal."
+  validate_ingest_token "${AGENT_TELEMETRY_INGEST_TOKEN:-}"
 }
 
 load_restic_profile() {
