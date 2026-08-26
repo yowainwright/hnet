@@ -43,6 +43,30 @@ flowchart LR
 
 See the [service flow](./ops/docs/PROJECT.md) and [telemetry operations](./ops/telemetry/README.md).
 
+The data path is explicit:
+
+<!-- customer-facing telemetry sequence derived from ops/telemetry/collector/edge.yaml and gateway.yaml -->
+
+```mermaid
+sequenceDiagram
+  participant Source as Agent or zsh
+  participant Edge as Mac edge collector
+  participant Queue as Local disk queue
+  participant Gateway as Central OTLP gateway
+  participant Store as ClickHouse
+  participant Dashboard as Grafana
+
+  Source->>Edge: Emit telemetry
+  Edge->>Edge: Apply default-deny redaction
+  Edge->>Queue: Store sanitized event
+  Queue-->>Edge: Release batch at 512 events or 5 seconds
+  Edge->>Gateway: Send batch over Tailscale HTTPS
+  Gateway->>Gateway: Apply default-deny redaction again
+  Gateway->>Store: Store sanitized signals
+  Dashboard->>Store: Query operational signals
+  Store-->>Dashboard: Return dashboards and trends
+```
+
 ## What stays private
 
 <!-- privacy guarantees derived from ops/telemetry/REDACTION.md -->
