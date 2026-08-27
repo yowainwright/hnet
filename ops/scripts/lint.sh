@@ -30,16 +30,12 @@ cd "$repo_dir"
 require_command shellcheck
 require_command zsh
 
-shell_files=(
-  ops/apps/hnetctl/hnetctl
-  ops/telemetry/*.sh
-  ops/telemetry/clickhouse/*.sh
-  ops/scripts/*.sh
-)
+shell_files=()
+while IFS= read -r shell_file; do
+  shell_files+=("$shell_file")
+done < <(find ops tests -type f -name '*.sh' -print | sort)
 
-while IFS= read -r test_file; do
-  shell_files+=("$test_file")
-done < <(find tests -type f -name '*.sh' -print | sort)
+[[ ${#shell_files[@]} -gt 0 ]] || fail 'No shell files found.'
 
 shellcheck -x "${shell_files[@]}"
 zsh -n ops/clients/zsh/*.zsh
