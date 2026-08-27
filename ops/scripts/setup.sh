@@ -42,6 +42,21 @@ esac
 hooks_dir="$git_dir/hooks"
 mkdir -p "$hooks_dir"
 
+remove_legacy_pre_push_hook() {
+  local hook_path="$hooks_dir/pre-push"
+  [[ -f $hook_path ]] || return 0
+
+  if grep -Fq 'pre-push: running tests' "$hook_path" &&
+    grep -Fq './ops/scripts/validate.sh' "$hook_path"; then
+    rm -f "$hook_path"
+    echo "Removed obsolete $hook_path"
+  else
+    echo "Keeping existing $hook_path"
+  fi
+
+  return 0
+}
+
 install_hook() {
   local hook_name=$1 hook_path="$hooks_dir/$1"
   if [[ $refresh_hooks != true && (-e $hook_path || -L $hook_path) ]]; then
@@ -62,22 +77,6 @@ echo "pre-commit: checking staged changes"
 git --no-pager diff --cached --check
 ./ops/scripts/lint.sh --strict
 echo "pre-commit: passed"
-HOOK
-    ;;
-  pre-push)
-    cat >"$hook_path" <<'HOOK'
-#!/bin/sh
-
-set -eu
-
-repo_dir=$(git rev-parse --show-toplevel)
-cd "$repo_dir"
-
-echo "pre-push: running tests"
-find tests -type f -name '*_test.sh' -exec {} \;
-echo "pre-push: validating Compose configuration"
-./ops/scripts/validate.sh
-echo "pre-push: passed"
 HOOK
     ;;
   commit-msg)
@@ -111,7 +110,7 @@ HOOK
 }
 
 install_hook pre-commit
-install_hook pre-push
 install_hook commit-msg
+remove_legacy_pre_push_hook
 
 echo "Installed hnet Git hooks in $hooks_dir"
