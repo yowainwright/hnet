@@ -17,7 +17,7 @@ test_setup_installs_and_preserves_hooks() {
 
   (cd "$setup_repo" && ./ops/scripts/setup.sh >/dev/null)
   hooks_dir="$setup_repo/.git/hooks"
-  for hook in pre-commit pre-push commit-msg; do
+  for hook in pre-commit commit-msg; do
     hook_path="$hooks_dir/$hook"
     assert_file "$hook_path"
     [[ -x $hook_path ]] || fail "Hook is not executable: $hook_path"
@@ -30,9 +30,13 @@ test_setup_installs_and_preserves_hooks() {
   assert_contains "$content" './ops/scripts/lint.sh --strict'
   assert_contains "$content" 'git --no-pager diff --cached --check'
   assert_contains "$content" 'pre-commit: passed'
-  content=$(<"$hooks_dir/pre-push")
-  assert_contains "$content" "find tests -type f -name '*_test.sh' -exec {} \\;"
-  assert_contains "$content" 'pre-push: passed'
+  cat >"$hooks_dir/pre-push" <<'HOOK'
+#!/bin/sh
+echo "pre-push: running tests"
+./ops/scripts/validate.sh
+HOOK
+  (cd "$setup_repo" && ./ops/scripts/setup.sh >/dev/null)
+  [[ ! -e $hooks_dir/pre-push ]] || fail 'Obsolete generated pre-push hook was kept.'
 
   printf '%s\n' '# custom local hook' >"$hooks_dir/pre-commit"
   (cd "$setup_repo" && ./ops/scripts/setup.sh >/dev/null)
