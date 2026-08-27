@@ -29,8 +29,10 @@ test_setup_installs_and_preserves_hooks() {
   content=$(<"$hooks_dir/pre-commit")
   assert_contains "$content" './ops/scripts/lint.sh --strict'
   assert_contains "$content" 'git --no-pager diff --cached --check'
+  assert_contains "$content" 'pre-commit: passed'
   content=$(<"$hooks_dir/pre-push")
   assert_contains "$content" "find tests -type f -name '*_test.sh' -exec {} \\;"
+  assert_contains "$content" 'pre-push: passed'
 
   printf '%s\n' '# custom local hook' >"$hooks_dir/pre-commit"
   (cd "$setup_repo" && ./ops/scripts/setup.sh >/dev/null)

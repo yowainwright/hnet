@@ -58,8 +58,10 @@ set -eu
 repo_dir=$(git rev-parse --show-toplevel)
 cd "$repo_dir"
 
+echo "pre-commit: checking staged changes"
 git --no-pager diff --cached --check
 ./ops/scripts/lint.sh --strict
+echo "pre-commit: passed"
 HOOK
     ;;
   pre-push)
@@ -71,8 +73,11 @@ set -eu
 repo_dir=$(git rev-parse --show-toplevel)
 cd "$repo_dir"
 
+echo "pre-push: running tests"
 find tests -type f -name '*_test.sh' -exec {} \;
+echo "pre-push: validating Compose configuration"
 ./ops/scripts/validate.sh
+echo "pre-push: passed"
 HOOK
     ;;
   commit-msg)
@@ -85,10 +90,11 @@ commit_subject=$(sed -n '1p' "$1")
 pattern='^(feat|fix|docs|style|refactor|test|chore)(\(.+\))?: .{1,72}$'
 
 case "$commit_subject" in
-  Merge\ *|Revert\ *) exit 0 ;;
+  Merge\ *|Revert\ *) echo "commit-msg: passed"; exit 0 ;;
 esac
 
 if printf '%s\n' "$commit_subject" | grep -Eq "$pattern"; then
+  echo "commit-msg: passed"
   exit 0
 fi
 

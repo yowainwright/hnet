@@ -13,5 +13,9 @@ grep -Fq 'bearertokenauth/server:' "$config_file" || fail "Edge collector server
 grep -Fq 'bearertokenauth/client:' "$config_file" || fail "Edge collector client authenticator is missing."
 [[ $(grep -Fc 'authenticator: bearertokenauth/server' "$config_file") -eq 2 ]] || fail "Both edge OTLP protocols must require authentication."
 grep -Fq 'authenticator: bearertokenauth/client' "$config_file" || fail "Edge-to-central export is not authenticated."
+grep -Fq 'filelog/dotfiles:' "$config_file" || fail "Edge collector must ingest dotfiles telemetry."
+grep -Fq 'dotfiles.jsonl' "$config_file" || fail "Edge collector dotfiles source file is missing."
+grep -Fq -- '- filelog/dotfiles' "$config_file" || fail "Dotfiles receiver is not attached to the logs pipeline."
+grep -Fq 'dotfiles\\.(package|manager|version)' "$config_file" || fail "Dotfiles telemetry allowlist is missing."
 
 echo "edge collector security tests passed."
