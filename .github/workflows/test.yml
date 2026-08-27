@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.HNET_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
 
     steps:
@@ -21,8 +21,12 @@ jobs:
 
       - name: Install shell tools
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes shellcheck zsh
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            brew list shellcheck >/dev/null 2>&1 || brew install shellcheck
+          else
+            sudo apt-get update
+            sudo apt-get install --yes shellcheck zsh
+          fi
 
       - name: Run lint
         run: ./ops/scripts/lint.sh
