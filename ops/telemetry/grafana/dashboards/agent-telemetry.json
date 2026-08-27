@@ -364,6 +364,62 @@
       ],
       "title": "Recent agent tool activity",
       "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 39
+      },
+      "id": 14,
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT count() AS installs FROM otel.dotfiles_installs",
+          "refId": "A"
+        }
+      ],
+      "title": "Dotfiles installs",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 18,
+        "x": 6,
+        "y": 39
+      },
+      "id": 15,
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT time, host, package_name, manager, tool, version, duration_ms, status, success FROM otel.dotfiles_installs ORDER BY time DESC LIMIT 100",
+          "refId": "A"
+        }
+      ],
+      "title": "Recent dotfiles installs",
+      "type": "table"
     }
   ],
   "refresh": "30s",

@@ -23,8 +23,8 @@ service=agent  model=example  operation=tool-call
 duration=2.4s  status=success  tokens_in=820  tokens_out=146
 ```
 
-Today the product covers agent and shell activity. Browser and frontend events
-are not enabled.
+Today the product covers agent, shell, and dotfiles setup activity. Browser and
+frontend events are not enabled.
 
 ## How it works
 
@@ -49,7 +49,7 @@ The data path is explicit:
 
 ```mermaid
 sequenceDiagram
-  participant Source as Agent or zsh
+  participant Source as Agent, dotfiles, or zsh
   participant Edge as Mac edge collector
   participant Queue as Local disk queue
   participant Gateway as Central OTLP gateway
@@ -77,6 +77,7 @@ content of private work.
 | Source | Stored signal |
 | --- | --- |
 | Shell | Command category, duration, exit code, safe project label, gateway host identity, timestamp |
+| Dotfiles | Setup event name, package name, package manager, tool name, tool version, duration, status, success flag, gateway host identity, timestamp |
 | Agents | Service, model, operation, token counts, session ID, status, safe tool name, duration, app version, gateway host identity, timestamp |
 
 Never stored: command text or output, prompts or completions, tool contents,

@@ -115,6 +115,20 @@ SELECT
 FROM otel.otel_logs
 WHERE LogAttributes['tool_name'] != '';
 
+CREATE OR REPLACE VIEW otel.dotfiles_installs AS
+SELECT
+    Timestamp AS time,
+    ResourceAttributes['host.name'] AS host,
+    LogAttributes['dotfiles.package'] AS package_name,
+    LogAttributes['dotfiles.manager'] AS manager,
+    LogAttributes['tool_name'] AS tool,
+    LogAttributes['dotfiles.version'] AS version,
+    toUInt64OrZero(LogAttributes['duration_ms']) AS duration_ms,
+    LogAttributes['status'] AS status,
+    LogAttributes['success'] AS success
+FROM otel.otel_logs
+WHERE LogAttributes['event.name'] = 'dotfiles.npm_global_install';
+
 CREATE OR REPLACE VIEW otel.agent_hosts AS
 SELECT
     host,

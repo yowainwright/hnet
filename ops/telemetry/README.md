@@ -6,7 +6,7 @@ and forwards it through private Tailscale HTTPS to the central Mac. ClickHouse
 stores the signals and Grafana renders the dashboards.
 
 ```text
-Codex / Gemini / Hermes / zsh
+Codex / Gemini / Hermes / dotfiles / zsh
           |
           v
 Mac edge collector -- Tailscale HTTPS --> central gateway
@@ -69,6 +69,18 @@ source /path/to/hnet/ops/clients/zsh/agent-telemetry.zsh
 The client records only command category, duration, exit code, safe project
 label, host, and collector timestamp. It never records command text, arguments,
 environment variables, output, or working directories.
+
+## Dotfiles setup
+
+The dotfiles bootstrap writes setup events to:
+
+```text
+${AGENT_TELEMETRY_STATE_DIR:-$HOME/.local/state/agent-telemetry}/dotfiles.jsonl
+```
+
+The edge collector ingests that file and keeps only event name, package name,
+package manager, tool name, version, duration, status, success flag, host, and
+collector timestamp.
 
 ## Operations
 
