@@ -12,6 +12,8 @@ edge_env=${TELEMETRY_EDGE_ENV:-}
 docker_bin=${TELEMETRY_DOCKER_BIN:-}
 [[ -n $studio_env ]] || studio_env="$telemetry_dir/.env.mac-studio"
 [[ -n $edge_env ]] || edge_env="$telemetry_dir/.env.edge"
+cluster_namespace=${HNET_KUBE_NAMESPACE:-telemetry}
+cluster_release=${HNET_HELM_RELEASE:-hnet-telemetry}
 
 fail() {
   echo "$1" >&2
@@ -313,13 +315,16 @@ restic_init() {
 }
 
 edge_preflight() {
+  local log_file
   ensure_docker
   load_edge_config
   validate_edge_config
   mkdir -p "$AGENT_TELEMETRY_STATE_DIR"
-  touch "$AGENT_TELEMETRY_STATE_DIR/zsh.jsonl"
   chmod 0700 "$AGENT_TELEMETRY_STATE_DIR"
-  chmod 0600 "$AGENT_TELEMETRY_STATE_DIR/zsh.jsonl"
+  for log_file in zsh.jsonl dotfiles.jsonl; do
+    touch "$AGENT_TELEMETRY_STATE_DIR/$log_file"
+    chmod 0600 "$AGENT_TELEMETRY_STATE_DIR/$log_file"
+  done
   edge_compose config --quiet
 }
 
@@ -340,6 +345,34 @@ edge_logs() {
   edge_compose logs --tail 200 collector
 }
 
+helm_command() {
+  require_command helm
+  helm "$@"
+}
+
+kubectl_command() {
+  require_command kubectl
+  kubectl "$@"
+}
+
+cluster_lint() {
+  helm_command lint "$telemetry_dir"
+}
+
+cluster_template() {
+  helm_command template "$cluster_release" "$telemetry_dir" --namespace "$cluster_namespace"
+}
+
+cluster_install() {
+  helm_command upgrade --install "$cluster_release" "$telemetry_dir" \
+    --namespace "$cluster_namespace" --create-namespace "$@"
+}
+
+cluster_status() {
+  kubectl_command --namespace "$cluster_namespace" \
+    get statefulsets,deployments,pods,services,persistentvolumeclaims
+}
+
 bootstrap() {
   studio_start
   studio_serve
@@ -352,6 +385,7 @@ usage() {
   echo "Data: logs SERVICE, backup [NAME], archive PROFILE [NAME]"
   echo "Backup setup: restic-init PROFILE"
   echo "Edge: edge-start, edge-status, edge-logs"
+  echo "Cluster: cluster-lint, cluster-template, cluster-install, cluster-status"
 }
 
 case "${1:-}" in
@@ -370,6 +404,13 @@ restic-init) restic_init "$@" ;;
 edge-start) edge_start ;;
 edge-status) edge_status ;;
 edge-logs) edge_logs ;;
+cluster-lint) cluster_lint ;;
+cluster-template) cluster_template ;;
+cluster-install)
+  shift
+  cluster_install "$@"
+  ;;
+cluster-status) cluster_status ;;
 *)
   usage
   exit 2

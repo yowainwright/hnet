@@ -28,11 +28,18 @@ validate_compose() {
     config --quiet
 }
 
+validate_helm() {
+  command -v helm >/dev/null 2>&1 || fail "Missing required command: helm"
+  helm lint ops/telemetry
+  helm template hnet-telemetry ops/telemetry --namespace telemetry >/dev/null
+}
+
 cd "$repo_dir"
 case "${1:-all}" in
 --fast) validate_shell ;;
 all)
   validate_shell
+  validate_helm
   validate_compose
   ;;
 *) fail "Usage: $0 [--fast]" 2 ;;

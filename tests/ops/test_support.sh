@@ -54,5 +54,10 @@ TOOL
 printf '%s\n' "$@" >> "${OPS_TEST_DOCKER_LOG:?}"
 TOOL
 
-  chmod +x "$fake_bin/shellcheck" "$fake_bin/zsh" "$fake_bin/shfmt" "$fake_bin/docker"
+  cat >"$fake_bin/helm" <<'TOOL'
+#!/bin/sh
+printf '%s\n' "$@" >> "${OPS_TEST_HELM_LOG:?}"
+TOOL
+
+  chmod +x "$fake_bin/shellcheck" "$fake_bin/zsh" "$fake_bin/shfmt" "$fake_bin/docker" "$fake_bin/helm"
 }

@@ -57,6 +57,20 @@ Configure supported agent vendors separately to emit OTLP to the loopback
 collector with the `Authorization: Bearer` value from
 `AGENT_TELEMETRY_INGEST_TOKEN`.
 
+## Kubernetes central deployment
+
+The central telemetry stack also has a Helm chart. Create the Kubernetes Secret
+named by `secret.existingName` in `values.yaml`, then validate and install it:
+
+```bash
+./ops/apps/hnetctl/hnetctl cluster-lint
+./ops/apps/hnetctl/hnetctl cluster-install
+```
+
+The chart keeps ClickHouse, Grafana, and the OTLP gateway private as
+`ClusterIP` services. Tailscale ingress can be added when the cluster access
+path is ready; edge Macs continue using the Compose collector.
+
 ## Zsh client
 
 Source the client after setting an optional safe project label:
