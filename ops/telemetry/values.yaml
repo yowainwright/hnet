@@ -1,0 +1,59 @@
+nameOverride: ""
+fullnameOverride: ""
+
+imagePullPolicy: IfNotPresent
+
+images:
+  clickhouse: clickhouse/clickhouse-server:26.4.4.38
+  collector: otel/opentelemetry-collector-contrib:0.153.0
+  grafana: grafana/grafana:13.1.1-ubuntu-slim
+
+secret:
+  existingName: hnet-telemetry-secrets
+  keys:
+    clickhousePassword: CLICKHOUSE_PASSWORD
+    grafanaClickhousePassword: GRAFANA_CLICKHOUSE_PASSWORD
+    grafanaAdminUser: GF_SECURITY_ADMIN_USER
+    grafanaAdminPassword: GF_SECURITY_ADMIN_PASSWORD
+    ingestToken: AGENT_TELEMETRY_INGEST_TOKEN
+
+telemetry:
+  ttl: 336h
+
+clickhouse:
+  storage:
+    dataSize: 20Gi
+    backupSize: 20Gi
+    storageClassName: ""
+  resources: {}
+
+collector:
+  storage:
+    size: 2Gi
+    storageClassName: ""
+  resources: {}
+
+grafana:
+  storage:
+    size: 5Gi
+    storageClassName: ""
+  resources: {}
+  rootUrl: ""
+  service:
+    type: ClusterIP
+    port: 3000
+
+gateway:
+  service:
+    type: ClusterIP
+    port: 4318
+
+dashboardSchema:
+  enabled: true
+
+serviceAccount:
+  create: true
+  automountServiceAccountToken: false
+
+networkPolicy:
+  enabled: false

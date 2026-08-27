@@ -38,6 +38,8 @@ EOF
     TELEMETRY_DOCKER_BIN="$test_root/bin/docker" \
     OPS_TEST_DOCKER_LOG="$docker_log" \
     "$repo_dir/ops/apps/hnetctl/hnetctl" edge-status
+  assert_file "$test_root/state/zsh.jsonl"
+  assert_file "$test_root/state/dotfiles.jsonl"
 
   sed "s/$valid_token/$invalid_token/" "$edge_env" >"$edge_env.invalid"
   if TELEMETRY_EDGE_ENV="$edge_env.invalid" \
@@ -48,8 +50,15 @@ EOF
   fi
 }
 
+test_hnetctl_lints_telemetry_chart() {
+  local output
+  output=$("$repo_dir/ops/apps/hnetctl/hnetctl" cluster-lint)
+  assert_contains "$output" "1 chart(s) linted"
+}
+
 make_fake_tools
 test_hnetctl_resolves_the_ops_telemetry_path
 test_hnetctl_validates_edge_ingest_token
+test_hnetctl_lints_telemetry_chart
 
 echo "hnetctl tests passed."
