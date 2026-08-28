@@ -81,11 +81,19 @@ cleanup() {
   fi
 }
 
+run_service_command() {
+  local runner_dir=$1 service_command=$2
+  (
+    cd "$runner_dir" || exit 0
+    "./svc.sh" "$service_command" >/dev/null 2>&1 || true
+  )
+}
+
 remove_existing_runner() {
   local runner_dir=$1
   if [[ -x "$runner_dir/svc.sh" ]]; then
-    (cd "$runner_dir" && ./svc.sh stop >/dev/null 2>&1 || true)
-    (cd "$runner_dir" && ./svc.sh uninstall >/dev/null 2>&1 || true)
+    run_service_command "$runner_dir" stop
+    run_service_command "$runner_dir" uninstall
   fi
   removal_token=$(gh api --method POST \
     "repos/$repo/actions/runners/remove-token" --jq '.token')
