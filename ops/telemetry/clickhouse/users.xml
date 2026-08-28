@@ -1,0 +1,15 @@
+<clickhouse>
+  <users>
+    <grafana_reader>
+      <password from_env="GRAFANA_CLICKHOUSE_PASSWORD" />
+      <networks>
+        <ip>::/0</ip>
+      </networks>
+      <profile>readonly</profile>
+      <quota>default</quota>
+      <grants>
+        <query>GRANT SELECT ON otel.*</query>
+      </grants>
+    </grafana_reader>
+  </users>
+</clickhouse>
