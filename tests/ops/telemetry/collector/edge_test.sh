@@ -9,8 +9,13 @@ fail() {
   exit 1
 }
 
+grep -Fq 'AGENT_TELEMETRY_LOCAL_TOKEN' "$config_file" || fail "Edge local token is missing."
+grep -Fq 'AGENT_TELEMETRY_GATEWAY_TOKEN' "$config_file" || fail "Edge gateway token is missing."
 grep -Fq 'bearertokenauth/server:' "$config_file" || fail "Edge collector server authenticator is missing."
 grep -Fq 'bearertokenauth/client:' "$config_file" || fail "Edge collector client authenticator is missing."
+if grep -Fq 'AGENT_TELEMETRY_INGEST_TOKEN' "$config_file"; then
+  fail "Edge collector still uses the shared ingest token."
+fi
 [[ $(grep -Fc 'authenticator: bearertokenauth/server' "$config_file") -eq 2 ]] || fail "Both edge OTLP protocols must require authentication."
 grep -Fq 'authenticator: bearertokenauth/client' "$config_file" || fail "Edge-to-central export is not authenticated."
 grep -Fq 'filelog/dotfiles:' "$config_file" || fail "Edge collector must ingest dotfiles telemetry."

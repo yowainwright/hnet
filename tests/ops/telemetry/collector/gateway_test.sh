@@ -10,6 +10,10 @@ fail() {
 }
 
 grep -Fq 'bearertokenauth/server:' "$config_file" || fail "Gateway server authenticator is missing."
+grep -Fq 'filename: /run/secrets/gateway_tokens' "$config_file" || fail "Gateway token file is missing."
+if grep -Fq 'AGENT_TELEMETRY_INGEST_TOKEN' "$config_file"; then
+  fail "Gateway still uses the shared ingest token."
+fi
 grep -Fq 'authenticator: bearertokenauth/server' "$config_file" || fail "Gateway OTLP HTTP receiver is unauthenticated."
 grep -Fq 'value: central-gateway' "$config_file" || fail "Gateway must assign its own host identity."
 [[ $(grep -Fc 'host.name' "$config_file") -eq 1 ]] || fail "Gateway must not preserve client-supplied host identities."

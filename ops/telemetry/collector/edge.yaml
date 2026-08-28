@@ -5,9 +5,9 @@ extensions:
     endpoint: 0.0.0.0:13133
   bearertokenauth/server:
     tokens:
-      - ${env:AGENT_TELEMETRY_INGEST_TOKEN}
+      - ${env:AGENT_TELEMETRY_LOCAL_TOKEN}
   bearertokenauth/client:
-    token: ${env:AGENT_TELEMETRY_INGEST_TOKEN}
+    token: ${env:AGENT_TELEMETRY_GATEWAY_TOKEN}
 
 receivers:
   filelog/zsh:

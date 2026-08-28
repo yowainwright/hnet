@@ -47,11 +47,6 @@ spec:
                 secretKeyRef:
                   name: {{ include "hnet-telemetry.secretName" . }}
                   key: {{ .Values.secret.keys.clickhousePassword }}
-            - name: AGENT_TELEMETRY_INGEST_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "hnet-telemetry.secretName" . }}
-                  key: {{ .Values.secret.keys.ingestToken }}
             - name: TELEMETRY_TTL
               value: {{ .Values.telemetry.ttl | quote }}
           ports:
@@ -82,6 +77,9 @@ spec:
               mountPath: /var/lib/otelcol
             - name: tmp
               mountPath: /tmp
+            - name: gateway-tokens
+              mountPath: /run/secrets
+              readOnly: true
       volumes:
         - name: config
           configMap:
@@ -89,6 +87,12 @@ spec:
         - name: tmp
           emptyDir:
             medium: Memory
+        - name: gateway-tokens
+          secret:
+            secretName: {{ include "hnet-telemetry.secretName" . }}
+            items:
+              - key: {{ .Values.secret.keys.gatewayTokens }}
+                path: gateway_tokens
   volumeClaimTemplates:
     - metadata:
         name: collector-data

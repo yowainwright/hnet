@@ -54,8 +54,9 @@ cp ops/telemetry/.env.edge.example ops/telemetry/.env.edge
 ```
 
 Configure supported agent vendors separately to emit OTLP to the loopback
-collector with the `Authorization: Bearer` value from
-`AGENT_TELEMETRY_INGEST_TOKEN`.
+collector with the local token from `AGENT_TELEMETRY_LOCAL_TOKEN`. Each edge
+also has a distinct `AGENT_TELEMETRY_GATEWAY_TOKEN`. The central
+`AGENT_TELEMETRY_GATEWAY_TOKENS` secret contains one gateway token per line.
 
 ## Kubernetes central deployment
 
