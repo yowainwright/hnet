@@ -15,7 +15,6 @@ secret:
     grafanaClickhousePassword: GRAFANA_CLICKHOUSE_PASSWORD
     grafanaAdminUser: GF_SECURITY_ADMIN_USER
     grafanaAdminPassword: GF_SECURITY_ADMIN_PASSWORD
-    gatewayTokens: AGENT_TELEMETRY_GATEWAY_TOKENS
 
 telemetry:
   ttl: 336h

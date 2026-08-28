@@ -5,29 +5,9 @@ extensions:
     endpoint: 0.0.0.0:13133
   bearertokenauth/server:
     tokens:
-      - ${env:AGENT_TELEMETRY_LOCAL_TOKEN}
-  bearertokenauth/client:
-    token: ${env:AGENT_TELEMETRY_GATEWAY_TOKEN}
+      - ${env:AGENT_TELEMETRY_INGEST_TOKEN}
 
 receivers:
-  filelog/zsh:
-    include:
-      - ${env:AGENT_TELEMETRY_LOG_DIR}/zsh.jsonl
-    start_at: end
-    storage: file_storage
-    operators:
-      - type: json_parser
-        parse_from: body
-        parse_to: attributes
-  filelog/dotfiles:
-    include:
-      - ${env:AGENT_TELEMETRY_LOG_DIR}/dotfiles.jsonl
-    start_at: beginning
-    storage: file_storage
-    operators:
-      - type: json_parser
-        parse_from: body
-        parse_to: attributes
   otlp:
     protocols:
       grpc:
@@ -107,8 +87,6 @@ processors:
 exporters:
   otlphttp/central:
     endpoint: ${env:AGENT_TELEMETRY_UPSTREAM}
-    auth:
-      authenticator: bearertokenauth/client
     sending_queue:
       enabled: true
       storage: file_storage
@@ -129,12 +107,9 @@ service:
     - file_storage
     - health_check
     - bearertokenauth/server
-    - bearertokenauth/client
   pipelines:
     logs:
       receivers:
-        - filelog/zsh
-        - filelog/dotfiles
         - otlp
       processors:
         - memory_limiter
