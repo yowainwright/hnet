@@ -3,12 +3,35 @@ extensions:
     directory: /var/lib/otelcol
   health_check:
     endpoint: 0.0.0.0:13133
+  bearertokenauth/mac_studio:
+    tokens:
+      - ${env:AGENT_TELEMETRY_MAC_STUDIO_TOKEN}
+  bearertokenauth/mac_mini_1:
+    tokens:
+      - ${env:AGENT_TELEMETRY_MAC_MINI_1_TOKEN}
+  bearertokenauth/mac_mini_2:
+    tokens:
+      - ${env:AGENT_TELEMETRY_MAC_MINI_2_TOKEN}
 
 receivers:
-  otlp:
+  otlp/mac_studio:
     protocols:
       http:
         endpoint: 0.0.0.0:4318
+        auth:
+          authenticator: bearertokenauth/mac_studio
+  otlp/mac_mini_1:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4319
+        auth:
+          authenticator: bearertokenauth/mac_mini_1
+  otlp/mac_mini_2:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4320
+        auth:
+          authenticator: bearertokenauth/mac_mini_2
 
 processors:
   memory_limiter:
@@ -69,12 +92,24 @@ processors:
             "^(gen_ai\\.(operation\\.name|system|provider\\.name|request\\.model|response\\.model|token\\.type)|app\\.version|model|auth_mode|session_source|originator|status|success|kind|tool|token_type|type|error\\.type)$")
   resource/pipeline:
     attributes:
-      - key: host.name
-        action: insert
-        value: central-gateway
       - key: telemetry.pipeline
         action: upsert
         value: hnet
+  resource/mac_studio:
+    attributes:
+      - key: host.name
+        action: upsert
+        value: mac-studio
+  resource/mac_mini_1:
+    attributes:
+      - key: host.name
+        action: upsert
+        value: mac-mini-1
+  resource/mac_mini_2:
+    attributes:
+      - key: host.name
+        action: upsert
+        value: mac-mini-2
 
 exporters:
   clickhouse:
@@ -107,31 +142,97 @@ service:
   extensions:
     - file_storage
     - health_check
+    - bearertokenauth/mac_studio
+    - bearertokenauth/mac_mini_1
+    - bearertokenauth/mac_mini_2
   pipelines:
-    logs:
+    logs/mac_studio:
       receivers:
-        - otlp
+        - otlp/mac_studio
       processors:
         - memory_limiter
         - transform/privacy
+        - resource/mac_studio
         - resource/pipeline
       exporters:
         - clickhouse
-    metrics:
+    logs/mac_mini_1:
       receivers:
-        - otlp
+        - otlp/mac_mini_1
       processors:
         - memory_limiter
         - transform/privacy
+        - resource/mac_mini_1
         - resource/pipeline
       exporters:
         - clickhouse
-    traces:
+    logs/mac_mini_2:
       receivers:
-        - otlp
+        - otlp/mac_mini_2
       processors:
         - memory_limiter
         - transform/privacy
+        - resource/mac_mini_2
+        - resource/pipeline
+      exporters:
+        - clickhouse
+    metrics/mac_studio:
+      receivers:
+        - otlp/mac_studio
+      processors:
+        - memory_limiter
+        - transform/privacy
+        - resource/mac_studio
+        - resource/pipeline
+      exporters:
+        - clickhouse
+    metrics/mac_mini_1:
+      receivers:
+        - otlp/mac_mini_1
+      processors:
+        - memory_limiter
+        - transform/privacy
+        - resource/mac_mini_1
+        - resource/pipeline
+      exporters:
+        - clickhouse
+    metrics/mac_mini_2:
+      receivers:
+        - otlp/mac_mini_2
+      processors:
+        - memory_limiter
+        - transform/privacy
+        - resource/mac_mini_2
+        - resource/pipeline
+      exporters:
+        - clickhouse
+    traces/mac_studio:
+      receivers:
+        - otlp/mac_studio
+      processors:
+        - memory_limiter
+        - transform/privacy
+        - resource/mac_studio
+        - resource/pipeline
+      exporters:
+        - clickhouse
+    traces/mac_mini_1:
+      receivers:
+        - otlp/mac_mini_1
+      processors:
+        - memory_limiter
+        - transform/privacy
+        - resource/mac_mini_1
+        - resource/pipeline
+      exporters:
+        - clickhouse
+    traces/mac_mini_2:
+      receivers:
+        - otlp/mac_mini_2
+      processors:
+        - memory_limiter
+        - transform/privacy
+        - resource/mac_mini_2
         - resource/pipeline
       exporters:
         - clickhouse

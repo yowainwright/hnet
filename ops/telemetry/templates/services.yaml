@@ -32,7 +32,7 @@ spec:
   ports:
     - name: otlp-http
       port: 4318
-      targetPort: otlp-http
+      targetPort: mac-studio-http
     - name: health
       port: 13133
       targetPort: health
@@ -50,9 +50,15 @@ metadata:
 spec:
   type: {{ .Values.gateway.service.type }}
   ports:
-    - name: otlp-http
+    - name: mac-studio-http
       port: {{ .Values.gateway.service.port }}
-      targetPort: otlp-http
+      targetPort: mac-studio-http
+    - name: mac-mini-1-http
+      port: {{ .Values.gateway.service.macMini1Port }}
+      targetPort: mac-mini-1-http
+    - name: mac-mini-2-http
+      port: {{ .Values.gateway.service.macMini2Port }}
+      targetPort: mac-mini-2-http
   selector:
     {{- include "hnet-telemetry.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: collector

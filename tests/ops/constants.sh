@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+# Sourced by the ops tests.
+# shellcheck disable=SC2034
+readonly TEST_GATEWAY_PORT=14318
+readonly TEST_GATEWAY_PORT_MAC_MINI_1=14319
+readonly TEST_GATEWAY_PORT_MAC_MINI_2=14320
+readonly TEST_GRAFANA_PORT=2021
+readonly TEST_TAILSCALE_DNS_NAME=studio.example.ts.net
+readonly TEST_GF_SECURITY_ADMIN_USER=admin
+readonly TEST_TELEMETRY_TTL=336h
+readonly TEST_GF_SECURITY_ADMIN_PASSWORD=aaaaaaaaaaaaaaaaaaaaaaaa
+readonly TEST_CLICKHOUSE_PASSWORD=bbbbbbbbbbbbbbbbbbbbbbbb
+readonly TEST_GRAFANA_CLICKHOUSE_PASSWORD=cccccccccccccccccccccccc
+readonly TEST_AGENT_TELEMETRY_MAC_STUDIO_TOKEN=dddddddddddddddddddddddddddddddd
+readonly TEST_AGENT_TELEMETRY_MAC_MINI_1_TOKEN=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+readonly TEST_AGENT_TELEMETRY_MAC_MINI_2_TOKEN=ffffffffffffffffffffffffffffffff

@@ -7,6 +7,30 @@ script_parent=${script_path%/*}
 script_dir=$(cd -- "$script_parent" && pwd)
 # shellcheck source=tests/ops/test_support.sh
 source "$script_dir/../../test_support.sh"
+# shellcheck source=tests/ops/constants.sh
+source "$repo_dir/tests/ops/constants.sh"
+
+hnetctl_source=$(sed '/^case "${1:-}"/,$d' "$repo_dir/ops/apps/hnetctl/hnetctl")
+
+run_studio_validation() {
+  env \
+    GATEWAY_PORT="$TEST_GATEWAY_PORT" \
+    GATEWAY_PORT_MAC_MINI_1="$TEST_GATEWAY_PORT_MAC_MINI_1" \
+    GATEWAY_PORT_MAC_MINI_2="$TEST_GATEWAY_PORT_MAC_MINI_2" \
+    GRAFANA_PORT="$TEST_GRAFANA_PORT" \
+    TAILSCALE_DNS_NAME="$TEST_TAILSCALE_DNS_NAME" \
+    GF_SECURITY_ADMIN_USER="$TEST_GF_SECURITY_ADMIN_USER" \
+    TELEMETRY_TTL="$TEST_TELEMETRY_TTL" \
+    GF_SECURITY_ADMIN_PASSWORD="$TEST_GF_SECURITY_ADMIN_PASSWORD" \
+    CLICKHOUSE_PASSWORD="$TEST_CLICKHOUSE_PASSWORD" \
+    GRAFANA_CLICKHOUSE_PASSWORD="$TEST_GRAFANA_CLICKHOUSE_PASSWORD" \
+    AGENT_TELEMETRY_MAC_STUDIO_TOKEN="$TEST_AGENT_TELEMETRY_MAC_STUDIO_TOKEN" \
+    AGENT_TELEMETRY_MAC_MINI_1_TOKEN="$TEST_AGENT_TELEMETRY_MAC_MINI_1_TOKEN" \
+    AGENT_TELEMETRY_MAC_MINI_2_TOKEN="$TEST_AGENT_TELEMETRY_MAC_MINI_2_TOKEN" \
+    bash -c "$hnetctl_source
+validate_studio_public_config
+validate_studio_secrets" "$repo_dir/ops/apps/hnetctl/hnetctl"
+}
 
 test_hnetctl_resolves_the_ops_telemetry_path() {
   local output exit_code=0
@@ -54,9 +78,36 @@ test_hnetctl_lints_telemetry_chart() {
   assert_contains "$output" "1 chart(s) linted"
 }
 
+test_hnetctl_validates_gateway_tokens() {
+  run_studio_validation
+}
+
+test_hnetctl_rejects_duplicate_gateway_tokens() {
+  if env \
+    GATEWAY_PORT="$TEST_GATEWAY_PORT" \
+    GATEWAY_PORT_MAC_MINI_1="$TEST_GATEWAY_PORT_MAC_MINI_1" \
+    GATEWAY_PORT_MAC_MINI_2="$TEST_GATEWAY_PORT_MAC_MINI_2" \
+    GRAFANA_PORT="$TEST_GRAFANA_PORT" \
+    TAILSCALE_DNS_NAME="$TEST_TAILSCALE_DNS_NAME" \
+    GF_SECURITY_ADMIN_USER="$TEST_GF_SECURITY_ADMIN_USER" \
+    TELEMETRY_TTL="$TEST_TELEMETRY_TTL" \
+    GF_SECURITY_ADMIN_PASSWORD="$TEST_GF_SECURITY_ADMIN_PASSWORD" \
+    CLICKHOUSE_PASSWORD="$TEST_CLICKHOUSE_PASSWORD" \
+    GRAFANA_CLICKHOUSE_PASSWORD="$TEST_GRAFANA_CLICKHOUSE_PASSWORD" \
+    AGENT_TELEMETRY_MAC_STUDIO_TOKEN="$TEST_AGENT_TELEMETRY_MAC_STUDIO_TOKEN" \
+    AGENT_TELEMETRY_MAC_MINI_1_TOKEN="$TEST_AGENT_TELEMETRY_MAC_STUDIO_TOKEN" \
+    AGENT_TELEMETRY_MAC_MINI_2_TOKEN="$TEST_AGENT_TELEMETRY_MAC_MINI_2_TOKEN" \
+    bash -c "$hnetctl_source
+validate_studio_secrets" "$repo_dir/ops/apps/hnetctl/hnetctl"; then
+    fail "Duplicate gateway tokens were accepted."
+  fi
+}
+
 make_fake_tools
 test_hnetctl_resolves_the_ops_telemetry_path
 test_hnetctl_validates_edge_ingest_token
 test_hnetctl_lints_telemetry_chart
+test_hnetctl_validates_gateway_tokens
+test_hnetctl_rejects_duplicate_gateway_tokens
 
 echo "hnetctl tests passed."
