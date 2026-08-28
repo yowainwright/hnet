@@ -1,0 +1,167 @@
+name: agent-telemetry
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.4.4.38
+    restart: unless-stopped
+    environment:
+      - CLICKHOUSE_DB=otel
+      - CLICKHOUSE_USER=otel_collector
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+      - CLICKHOUSE_PASSWORD
+      - GRAFANA_CLICKHOUSE_PASSWORD
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./backups:/var/lib/clickhouse/backups
+      - ./clickhouse/backups.xml:/etc/clickhouse-server/config.d/backups.xml:ro
+      - ./clickhouse/users.xml:/etc/clickhouse-server/users.d/telemetry.xml:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q -O - http://127.0.0.1:8123/ping | grep -q Ok
+      interval: 10s
+      timeout: 15s
+      retries: 12
+      start_period: 2m
+    networks:
+      - telemetry
+
+  collector-data-init:
+    image: clickhouse/clickhouse-server:26.4.4.38
+    restart: "no"
+    user: "0:0"
+    command:
+      - sh
+      - -c
+      - chown -R 10001:10001 /var/lib/otelcol
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - collector-data:/var/lib/otelcol
+    network_mode: none
+
+  collector:
+    image: otel/opentelemetry-collector-contrib:0.153.0
+    restart: unless-stopped
+    command:
+      - --config=/etc/otelcol-contrib/config.yaml
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - CLICKHOUSE_USER=otel_collector
+      - CLICKHOUSE_PASSWORD
+      - AGENT_TELEMETRY_MAC_STUDIO_TOKEN
+      - AGENT_TELEMETRY_MAC_MINI_1_TOKEN
+      - AGENT_TELEMETRY_MAC_MINI_2_TOKEN
+      - TELEMETRY_TTL
+    ports:
+      - "127.0.0.1:${GATEWAY_PORT:-14318}:4318"
+      - "127.0.0.1:${GATEWAY_PORT_MAC_MINI_1:-14319}:4319"
+      - "127.0.0.1:${GATEWAY_PORT_MAC_MINI_2:-14320}:4320"
+    volumes:
+      - ./collector/gateway.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - collector-data:/var/lib/otelcol
+    tmpfs:
+      - /tmp
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      collector-data-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - /otelcol-contrib
+        - --version
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - telemetry
+
+  dashboard-schema:
+    image: clickhouse/clickhouse-server:26.4.4.38
+    restart: on-failure
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    command:
+      - /bin/bash
+      - /bootstrap/create-dashboard-views.sh
+    environment:
+      - CLICKHOUSE_PASSWORD
+    volumes:
+      - type: bind
+        source: ./clickhouse/create-dashboard-views.sh
+        target: /bootstrap/create-dashboard-views.sh
+        read_only: true
+      - type: bind
+        source: ./clickhouse/dashboard-views.sql
+        target: /bootstrap/dashboard-views.sql
+        read_only: true
+    depends_on:
+      collector:
+        condition: service_started
+    networks:
+      - telemetry
+
+  grafana:
+    image: grafana/grafana:13.1.1-ubuntu-slim
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_AUTH_PROXY_ENABLED=false
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_USERS_AUTO_ASSIGN_ORG_ROLE=Viewer
+      - GF_SERVER_ROOT_URL=https://${TAILSCALE_DNS_NAME}
+      - GF_LOG_MODE=console
+      - GF_PLUGINS_PREINSTALL_SYNC=grafana-clickhouse-datasource@4.20.0
+      - GF_SECURITY_ADMIN_USER
+      - GF_SECURITY_ADMIN_PASSWORD
+      - GRAFANA_CLICKHOUSE_PASSWORD
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-2021}:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    tmpfs:
+      - /tmp
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl -fsS http://127.0.0.1:3000/api/health >/dev/null
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      - telemetry
+      - egress
+
+networks:
+  telemetry:
+    internal: true
+  egress:
+
+volumes:
+  clickhouse-data:
+  collector-data:
+  grafana-data:

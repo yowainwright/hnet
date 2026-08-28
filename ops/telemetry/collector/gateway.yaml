@@ -1,0 +1,238 @@
+extensions:
+  file_storage:
+    directory: /var/lib/otelcol
+  health_check:
+    endpoint: 0.0.0.0:13133
+  bearertokenauth/mac_studio:
+    tokens:
+      - ${env:AGENT_TELEMETRY_MAC_STUDIO_TOKEN}
+  bearertokenauth/mac_mini_1:
+    tokens:
+      - ${env:AGENT_TELEMETRY_MAC_MINI_1_TOKEN}
+  bearertokenauth/mac_mini_2:
+    tokens:
+      - ${env:AGENT_TELEMETRY_MAC_MINI_2_TOKEN}
+
+receivers:
+  otlp/mac_studio:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+        auth:
+          authenticator: bearertokenauth/mac_studio
+  otlp/mac_mini_1:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4319
+        auth:
+          authenticator: bearertokenauth/mac_mini_1
+  otlp/mac_mini_2:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4320
+        auth:
+          authenticator: bearertokenauth/mac_mini_2
+
+processors:
+  memory_limiter:
+    check_interval: 5s
+    limit_mib: 512
+    spike_limit_mib: 128
+  transform/privacy:
+    error_mode: propagate
+    trace_statements:
+      - context: scope
+        statements:
+          - keep_matching_keys(scope.attributes, "^$")
+      - context: resource
+        statements:
+          - >-
+            keep_matching_keys(resource.attributes,
+            "^(service\\.name|service\\.namespace|service\\.version|deployment\\.environment\\.name|telemetry\\.sdk\\.(name|language|version)|telemetry\\.pipeline|app\\.version|model|auth_mode|session_source|originator)$")
+      - context: span
+        statements:
+          - set(span.name, "agent.operation")
+          - >-
+            keep_matching_keys(span.attributes,
+            "^(event\\.name|gen_ai\\.(operation\\.name|system|provider\\.name|request\\.model|response\\.model|usage\\.(input|output)_tokens|conversation\\.id)|conversation\\.id|session\\.id|app\\.version|model|auth_mode|session_source|originator|attempt|duration_ms|http\\.response\\.status_code|event\\.kind|(input|output|cached|reasoning|tool)_token_count|prompt_length|tool_name|call_id|decision|success|status|error\\.type)$")
+      - context: spanevent
+        statements:
+          - set(spanevent.name, "agent.event")
+          - >-
+            keep_matching_keys(spanevent.attributes,
+            "^(event\\.name|gen_ai\\.(operation\\.name|system|provider\\.name|request\\.model|response\\.model|usage\\.(input|output)_tokens|conversation\\.id)|conversation\\.id|session\\.id|app\\.version|model|duration_ms|event\\.kind|(input|output|cached|reasoning|tool)_token_count|tool_name|call_id|decision|success|status|error\\.type)$")
+    log_statements:
+      - context: scope
+        statements:
+          - keep_matching_keys(scope.attributes, "^$")
+      - context: resource
+        statements:
+          - >-
+            keep_matching_keys(resource.attributes,
+            "^(service\\.name|service\\.namespace|service\\.version|deployment\\.environment\\.name|telemetry\\.sdk\\.(name|language|version)|telemetry\\.pipeline|app\\.version|model|auth_mode|session_source|originator)$")
+      - context: log
+        statements:
+          - set(body, "")
+          - >-
+            keep_matching_keys(log.attributes,
+            "^(event\\.name|gen_ai\\.(operation\\.name|system|provider\\.name|request\\.model|response\\.model|usage\\.(input|output)_tokens|conversation\\.id|token\\.type)|conversation\\.id|session\\.id|app\\.version|model|auth_mode|session_source|originator|attempt|duration_ms|http\\.response\\.status_code|event\\.kind|(input|output|cached|reasoning|tool)_token_count|prompt_length|tool_name|call_id|decision|success|status|error\\.type|shell\\.command\\.category|shell\\.duration_ms|shell\\.exit_code|shell\\.project|dotfiles\\.(package|manager|version))$")
+    metric_statements:
+      - context: scope
+        statements:
+          - keep_matching_keys(scope.attributes, "^$")
+      - context: resource
+        statements:
+          - >-
+            keep_matching_keys(resource.attributes,
+            "^(service\\.name|service\\.namespace|service\\.version|deployment\\.environment\\.name|telemetry\\.sdk\\.(name|language|version)|telemetry\\.pipeline|app\\.version|model|auth_mode|session_source|originator)$")
+      - context: datapoint
+        statements:
+          - >-
+            keep_matching_keys(datapoint.attributes,
+            "^(gen_ai\\.(operation\\.name|system|provider\\.name|request\\.model|response\\.model|token\\.type)|app\\.version|model|auth_mode|session_source|originator|status|success|kind|tool|token_type|type|error\\.type)$")
+  resource/pipeline:
+    attributes:
+      - key: telemetry.pipeline
+        action: upsert
+        value: hnet
+  resource/mac_studio:
+    attributes:
+      - key: host.name
+        action: upsert
+        value: mac-studio
+  resource/mac_mini_1:
+    attributes:
+      - key: host.name
+        action: upsert
+        value: mac-mini-1
+  resource/mac_mini_2:
+    attributes:
+      - key: host.name
+        action: upsert
+        value: mac-mini-2
+
+exporters:
+  clickhouse:
+    endpoint: tcp://clickhouse:9000?dial_timeout=10s
+    database: otel
+    username: ${env:CLICKHOUSE_USER}
+    password: ${env:CLICKHOUSE_PASSWORD}
+    ttl: ${env:TELEMETRY_TTL}
+    create_schema: true
+    async_insert: true
+    compress: lz4
+    timeout: 10s
+    sending_queue:
+      enabled: true
+      storage: file_storage
+      num_consumers: 2
+      queue_size: 10000
+      sizer: items
+      batch:
+        min_size: 5000
+        flush_timeout: 5s
+        sizer: items
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 0s
+
+service:
+  extensions:
+    - file_storage
+    - health_check
+    - bearertokenauth/mac_studio
+    - bearertokenauth/mac_mini_1
+    - bearertokenauth/mac_mini_2
+  pipelines:
+    logs/mac_studio:
+      receivers:
+        - otlp/mac_studio
+      processors:
+        - memory_limiter
+        - transform/privacy
+        - resource/mac_studio
+        - resource/pipeline
+      exporters:
+        - clickhouse
+    logs/mac_mini_1:
+      receivers:
+        - otlp/mac_mini_1
+      processors:
+        - memory_limiter
+        - transform/privacy
+        - resource/mac_mini_1
+        - resource/pipeline
+      exporters:
+        - clickhouse
+    logs/mac_mini_2:
+      receivers:
+        - otlp/mac_mini_2
+      processors:
+        - memory_limiter
+        - transform/privacy
+        - resource/mac_mini_2
+        - resource/pipeline
+      exporters:
+        - clickhouse
+    metrics/mac_studio:
+      receivers:
+        - otlp/mac_studio
+      processors:
+        - memory_limiter
+        - transform/privacy
+        - resource/mac_studio
+        - resource/pipeline
+      exporters:
+        - clickhouse
+    metrics/mac_mini_1:
+      receivers:
+        - otlp/mac_mini_1
+      processors:
+        - memory_limiter
+        - transform/privacy
+        - resource/mac_mini_1
+        - resource/pipeline
+      exporters:
+        - clickhouse
+    metrics/mac_mini_2:
+      receivers:
+        - otlp/mac_mini_2
+      processors:
+        - memory_limiter
+        - transform/privacy
+        - resource/mac_mini_2
+        - resource/pipeline
+      exporters:
+        - clickhouse
+    traces/mac_studio:
+      receivers:
+        - otlp/mac_studio
+      processors:
+        - memory_limiter
+        - transform/privacy
+        - resource/mac_studio
+        - resource/pipeline
+      exporters:
+        - clickhouse
+    traces/mac_mini_1:
+      receivers:
+        - otlp/mac_mini_1
+      processors:
+        - memory_limiter
+        - transform/privacy
+        - resource/mac_mini_1
+        - resource/pipeline
+      exporters:
+        - clickhouse
+    traces/mac_mini_2:
+      receivers:
+        - otlp/mac_mini_2
+      processors:
+        - memory_limiter
+        - transform/privacy
+        - resource/mac_mini_2
+        - resource/pipeline
+      exporters:
+        - clickhouse

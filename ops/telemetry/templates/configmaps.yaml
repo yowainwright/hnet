@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "hnet-telemetry.fullname" . }}-collector
+  labels:
+    {{- include "hnet-telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: collector
+data:
+  config.yaml: |
+{{ .Files.Get "collector/gateway.yaml" | indent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "hnet-telemetry.fullname" . }}-clickhouse
+  labels:
+    {{- include "hnet-telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: clickhouse
+data:
+  users.xml: |
+{{ .Files.Get "clickhouse/users.xml" | indent 4 }}
+  backups.xml: |
+{{ .Files.Get "clickhouse/backups.xml" | indent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "hnet-telemetry.fullname" . }}-grafana
+  labels:
+    {{- include "hnet-telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+data:
+  clickhouse.yaml: |
+{{ .Files.Get "grafana/provisioning/datasources/clickhouse.yaml" | indent 4 }}
+  dashboards.yaml: |
+{{ .Files.Get "grafana/provisioning/dashboards/dashboards.yaml" | indent 4 }}
+  agent-telemetry.json: |
+{{ .Files.Get "grafana/dashboards/agent-telemetry.json" | indent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "hnet-telemetry.fullname" . }}-dashboard-schema
+  labels:
+    {{- include "hnet-telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dashboard-schema
+data:
+  create-dashboard-views.sh: |
+{{ .Files.Get "clickhouse/create-dashboard-views.sh" | indent 4 }}
+  dashboard-views.sql: |
+{{ .Files.Get "clickhouse/dashboard-views.sql" | indent 4 }}

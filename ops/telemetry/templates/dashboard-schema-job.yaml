@@ -1,0 +1,59 @@
+{{- if .Values.dashboardSchema.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "hnet-telemetry.fullname" . }}-dashboard-schema
+  labels:
+    {{- include "hnet-telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dashboard-schema
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "hnet-telemetry.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: dashboard-schema
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "hnet-telemetry.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: schema
+          image: {{ .Values.images.clickhouse }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          command:
+            - /bin/bash
+            - /bootstrap/create-dashboard-views.sh
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "hnet-telemetry.secretName" . }}
+                  key: {{ .Values.secret.keys.clickhousePassword }}
+          volumeMounts:
+            - name: schema
+              mountPath: /bootstrap/create-dashboard-views.sh
+              subPath: create-dashboard-views.sh
+              readOnly: true
+            - name: schema
+              mountPath: /bootstrap/dashboard-views.sql
+              subPath: dashboard-views.sql
+              readOnly: true
+      volumes:
+        - name: schema
+          configMap:
+            name: {{ include "hnet-telemetry.fullname" . }}-dashboard-schema
+            defaultMode: 0555
+{{- end }}

@@ -1,0 +1,81 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: clickhouse
+  labels:
+    {{- include "hnet-telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: clickhouse
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+    - name: native
+      port: 9000
+      targetPort: native
+    - name: http
+      port: 8123
+      targetPort: http
+  selector:
+    {{- include "hnet-telemetry.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: clickhouse
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: collector
+  labels:
+    {{- include "hnet-telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: collector
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+    - name: otlp-http
+      port: 4318
+      targetPort: mac-studio-http
+    - name: health
+      port: 13133
+      targetPort: health
+  selector:
+    {{- include "hnet-telemetry.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: collector
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  labels:
+    {{- include "hnet-telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  type: {{ .Values.gateway.service.type }}
+  ports:
+    - name: mac-studio-http
+      port: {{ .Values.gateway.service.port }}
+      targetPort: mac-studio-http
+    - name: mac-mini-1-http
+      port: {{ .Values.gateway.service.macMini1Port }}
+      targetPort: mac-mini-1-http
+    - name: mac-mini-2-http
+      port: {{ .Values.gateway.service.macMini2Port }}
+      targetPort: mac-mini-2-http
+  selector:
+    {{- include "hnet-telemetry.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: collector
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  labels:
+    {{- include "hnet-telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+spec:
+  type: {{ .Values.grafana.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.grafana.service.port }}
+      targetPort: http
+  selector:
+    {{- include "hnet-telemetry.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana

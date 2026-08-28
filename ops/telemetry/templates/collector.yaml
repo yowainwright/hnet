@@ -1,0 +1,120 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "hnet-telemetry.fullname" . }}-collector
+  labels:
+    {{- include "hnet-telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: collector
+spec:
+  serviceName: collector
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "hnet-telemetry.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: collector
+  template:
+    metadata:
+      labels:
+        {{- include "hnet-telemetry.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: collector
+      annotations:
+        checksum/config: {{ include "hnet-telemetry.configmaps" . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "hnet-telemetry.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: collector
+          image: {{ .Values.images.collector }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          args:
+            - --config=/etc/otelcol-contrib/config.yaml
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: CLICKHOUSE_USER
+              value: otel_collector
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "hnet-telemetry.secretName" . }}
+                  key: {{ .Values.secret.keys.clickhousePassword }}
+            - name: TELEMETRY_TTL
+              value: {{ .Values.telemetry.ttl | quote }}
+            - name: AGENT_TELEMETRY_MAC_STUDIO_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "hnet-telemetry.secretName" . }}
+                  key: {{ .Values.secret.keys.macStudioToken }}
+            - name: AGENT_TELEMETRY_MAC_MINI_1_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "hnet-telemetry.secretName" . }}
+                  key: {{ .Values.secret.keys.macMini1Token }}
+            - name: AGENT_TELEMETRY_MAC_MINI_2_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "hnet-telemetry.secretName" . }}
+                  key: {{ .Values.secret.keys.macMini2Token }}
+          ports:
+            - name: mac-studio-http
+              containerPort: 4318
+            - name: mac-mini-1-http
+              containerPort: 4319
+            - name: mac-mini-2-http
+              containerPort: 4320
+            - name: health
+              containerPort: 13133
+          readinessProbe:
+            httpGet:
+              path: /
+              port: health
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+          resources: {{- toYaml .Values.collector.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otelcol-contrib/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            - name: collector-data
+              mountPath: /var/lib/otelcol
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "hnet-telemetry.fullname" . }}-collector
+        - name: tmp
+          emptyDir:
+            medium: Memory
+  volumeClaimTemplates:
+    - metadata:
+        name: collector-data
+        labels:
+          {{- include "hnet-telemetry.labels" . | nindent 10 }}
+          app.kubernetes.io/component: collector
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        {{- with .Values.collector.storage.storageClassName }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.collector.storage.size }}
