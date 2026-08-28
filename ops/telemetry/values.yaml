@@ -15,6 +15,9 @@ secret:
     grafanaClickhousePassword: GRAFANA_CLICKHOUSE_PASSWORD
     grafanaAdminUser: GF_SECURITY_ADMIN_USER
     grafanaAdminPassword: GF_SECURITY_ADMIN_PASSWORD
+    macStudioToken: AGENT_TELEMETRY_MAC_STUDIO_TOKEN
+    macMini1Token: AGENT_TELEMETRY_MAC_MINI_1_TOKEN
+    macMini2Token: AGENT_TELEMETRY_MAC_MINI_2_TOKEN
 
 telemetry:
   ttl: 336h
@@ -46,6 +49,8 @@ gateway:
   service:
     type: ClusterIP
     port: 4318
+    macMini1Port: 4319
+    macMini2Port: 4320
 
 dashboardSchema:
   enabled: true

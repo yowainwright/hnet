@@ -6,6 +6,8 @@ extensions:
   bearertokenauth/server:
     tokens:
       - ${env:AGENT_TELEMETRY_INGEST_TOKEN}
+  bearertokenauth/client:
+    token: ${env:AGENT_TELEMETRY_INGEST_TOKEN}
 
 receivers:
   otlp:
@@ -87,6 +89,8 @@ processors:
 exporters:
   otlphttp/central:
     endpoint: ${env:AGENT_TELEMETRY_UPSTREAM}
+    auth:
+      authenticator: bearertokenauth/client
     sending_queue:
       enabled: true
       storage: file_storage
@@ -107,6 +111,7 @@ service:
     - file_storage
     - health_check
     - bearertokenauth/server
+    - bearertokenauth/client
   pipelines:
     logs:
       receivers:

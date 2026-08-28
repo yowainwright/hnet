@@ -49,9 +49,28 @@ spec:
                   key: {{ .Values.secret.keys.clickhousePassword }}
             - name: TELEMETRY_TTL
               value: {{ .Values.telemetry.ttl | quote }}
+            - name: AGENT_TELEMETRY_MAC_STUDIO_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "hnet-telemetry.secretName" . }}
+                  key: {{ .Values.secret.keys.macStudioToken }}
+            - name: AGENT_TELEMETRY_MAC_MINI_1_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "hnet-telemetry.secretName" . }}
+                  key: {{ .Values.secret.keys.macMini1Token }}
+            - name: AGENT_TELEMETRY_MAC_MINI_2_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "hnet-telemetry.secretName" . }}
+                  key: {{ .Values.secret.keys.macMini2Token }}
           ports:
-            - name: otlp-http
+            - name: mac-studio-http
               containerPort: 4318
+            - name: mac-mini-1-http
+              containerPort: 4319
+            - name: mac-mini-2-http
+              containerPort: 4320
             - name: health
               containerPort: 13133
           readinessProbe:

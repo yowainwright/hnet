@@ -34,12 +34,17 @@ cp ops/telemetry/.env.mac-studio.example ops/telemetry/.env.mac-studio
 The environment file may contain 1Password references. Resolved secrets are
 exported only to Docker Compose and are never written back to disk.
 
+Create one 1Password item named `agent-telemetry` with the three gateway token
+fields: `mac-studio-token`, `mac-mini-1-token`, and `mac-mini-2-token`.
+
 The local ports have separate roles:
 
 | Port | Binding | Purpose |
 | --- | --- | --- |
 | `2021` | loopback | Grafana behind Tailscale Serve |
-| `14318` | loopback | Central OTLP gateway behind Tailscale Serve |
+| `14318` | loopback | `mac-studio` gateway behind Tailscale Serve |
+| `14319` | loopback | `mac-mini-1` gateway behind Tailscale Serve |
+| `14320` | loopback | `mac-mini-2` gateway behind Tailscale Serve |
 | `4317` / `4318` | loopback | Edge collector for local clients |
 
 ## Edge Macs
@@ -56,6 +61,10 @@ cp ops/telemetry/.env.edge.example ops/telemetry/.env.edge
 Configure supported agent vendors separately to emit OTLP to the loopback
 collector with the `Authorization: Bearer` value from
 `AGENT_TELEMETRY_INGEST_TOKEN`.
+
+The gateway has one authenticated slot per Mac: `mac-studio` uses port `4318`,
+`mac-mini-1` uses `4319`, and `mac-mini-2` uses `4320`. Copy the edge example
+for each Mac and update its host, upstream port, and token field.
 
 ## Kubernetes central deployment
 
