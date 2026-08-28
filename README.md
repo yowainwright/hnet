@@ -76,17 +76,17 @@ content of private work.
 
 | Source | Stored signal |
 | --- | --- |
-| Shell | Command category, duration, exit code, safe project label, gateway host identity, timestamp |
-| Dotfiles | Setup event name, package name, package manager, tool name, tool version, duration, status, success flag, gateway host identity, timestamp |
-| Agents | Service, model, operation, token counts, session ID, status, safe tool name, duration, app version, gateway host identity, timestamp |
+| Shell | Command category, duration, exit code, safe project label, host identity, timestamp |
+| Dotfiles | Setup event name, package name, package manager, tool name, tool version, duration, status, success flag, host identity, timestamp |
+| Agents | Service, model, operation, token counts, session ID, status, safe tool name, duration, app version, host identity, timestamp |
 
 Never stored: command text or output, prompts or completions, tool contents,
 environment variables, paths, account identifiers, exception messages, or
 request and response bodies.
 
 Redaction runs on the Mac and again at the central gateway. A redaction failure
-drops the affected payload, and the gateway replaces client-supplied host
-identities with its own `central-gateway` identity.
+drops the affected payload. The private Tailscale gateway preserves the edge
+host identity and supplies `central-gateway` only when no host is present.
 
 ## Access and retention
 

@@ -3,16 +3,12 @@ extensions:
     directory: /var/lib/otelcol
   health_check:
     endpoint: 0.0.0.0:13133
-  bearertokenauth/server:
-    filename: /run/secrets/gateway_tokens
 
 receivers:
   otlp:
     protocols:
       http:
         endpoint: 0.0.0.0:4318
-        auth:
-          authenticator: bearertokenauth/server
 
 processors:
   memory_limiter:
@@ -74,7 +70,7 @@ processors:
   resource/pipeline:
     attributes:
       - key: host.name
-        action: upsert
+        action: insert
         value: central-gateway
       - key: telemetry.pipeline
         action: upsert
@@ -111,7 +107,6 @@ service:
   extensions:
     - file_storage
     - health_check
-    - bearertokenauth/server
   pipelines:
     logs:
       receivers:

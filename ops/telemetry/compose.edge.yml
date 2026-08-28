@@ -14,16 +14,13 @@ services:
     environment:
       AGENT_TELEMETRY_UPSTREAM: ${AGENT_TELEMETRY_UPSTREAM}
       AGENT_TELEMETRY_HOST: ${AGENT_TELEMETRY_HOST}
-      AGENT_TELEMETRY_LOCAL_TOKEN: ${AGENT_TELEMETRY_LOCAL_TOKEN:?AGENT_TELEMETRY_LOCAL_TOKEN is required}
-      AGENT_TELEMETRY_GATEWAY_TOKEN: ${AGENT_TELEMETRY_GATEWAY_TOKEN:?AGENT_TELEMETRY_GATEWAY_TOKEN is required}
-      AGENT_TELEMETRY_LOG_DIR: /var/lib/agent-telemetry
+      AGENT_TELEMETRY_INGEST_TOKEN: ${AGENT_TELEMETRY_INGEST_TOKEN:?AGENT_TELEMETRY_INGEST_TOKEN is required}
       AGENT_TELEMETRY_QUEUE_DIR: /var/lib/otelcol
     ports:
       - "127.0.0.1:4317:4317"
       - "127.0.0.1:4318:4318"
     volumes:
       - ./collector/edge.yaml:/etc/otelcol-contrib/config.yaml:ro
-      - ${AGENT_TELEMETRY_STATE_DIR}:/var/lib/agent-telemetry:ro
       - collector-edge-data:/var/lib/otelcol
     tmpfs:
       - /tmp

@@ -54,14 +54,14 @@ cp ops/telemetry/.env.edge.example ops/telemetry/.env.edge
 ```
 
 Configure supported agent vendors separately to emit OTLP to the loopback
-collector with the local token from `AGENT_TELEMETRY_LOCAL_TOKEN`. Each edge
-also has a distinct `AGENT_TELEMETRY_GATEWAY_TOKEN`. The central
-`AGENT_TELEMETRY_GATEWAY_TOKENS` secret contains one gateway token per line.
+collector with the `Authorization: Bearer` value from
+`AGENT_TELEMETRY_INGEST_TOKEN`.
 
 ## Kubernetes central deployment
 
 The central telemetry stack also has a Helm chart. Create the Kubernetes Secret
-named by `secret.existingName` in `values.yaml`, then validate and install it:
+named by `secret.existingName` in `values.yaml` with the database and Grafana
+credentials, then validate and install it:
 
 ```bash
 ./ops/apps/hnetctl/hnetctl cluster-lint
@@ -74,28 +74,23 @@ path is ready; edge Macs continue using the Compose collector.
 
 ## Zsh client
 
-Source the client after setting an optional safe project label:
+Source the client after setting the local token and an optional safe project
+label:
 
 ```zsh
+export AGENT_TELEMETRY_INGEST_TOKEN=...
 export AGENT_TELEMETRY_PROJECT=example-project
 source /path/to/hnet/ops/clients/zsh/agent-telemetry.zsh
 ```
 
-The client records only command category, duration, exit code, safe project
-label, host, and collector timestamp. It never records command text, arguments,
+The client sends only command category, duration, exit code, and a safe project
+label to the loopback collector. It never sends command text, arguments,
 environment variables, output, or working directories.
 
 ## Dotfiles setup
 
-The dotfiles bootstrap writes setup events to:
-
-```text
-${AGENT_TELEMETRY_STATE_DIR:-$HOME/.local/state/agent-telemetry}/dotfiles.jsonl
-```
-
-The edge collector ingests that file and keeps only event name, package name,
-package manager, tool name, version, duration, status, success flag, host, and
-collector timestamp.
+Dotfiles setup events should emit OTLP to the local edge collector with the
+same bearer token. The edge collector does not ingest local log files.
 
 ## Operations
 

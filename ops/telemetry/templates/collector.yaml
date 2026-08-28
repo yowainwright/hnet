@@ -77,9 +77,6 @@ spec:
               mountPath: /var/lib/otelcol
             - name: tmp
               mountPath: /tmp
-            - name: gateway-tokens
-              mountPath: /run/secrets
-              readOnly: true
       volumes:
         - name: config
           configMap:
@@ -87,12 +84,6 @@ spec:
         - name: tmp
           emptyDir:
             medium: Memory
-        - name: gateway-tokens
-          secret:
-            secretName: {{ include "hnet-telemetry.secretName" . }}
-            items:
-              - key: {{ .Values.secret.keys.gatewayTokens }}
-                path: gateway_tokens
   volumeClaimTemplates:
     - metadata:
         name: collector-data

@@ -20,7 +20,6 @@ grep -Fq 'name: clickhouse' <<<"$rendered" || fail "ClickHouse service is missin
 grep -Fq 'name: gateway' <<<"$rendered" || fail "Gateway service is missing."
 grep -Fq 'name: grafana' <<<"$rendered" || fail "Grafana service is missing."
 grep -Fq 'name: hnet-telemetry-secrets' <<<"$rendered" || fail "Secret reference is missing."
-grep -Fq 'gateway_tokens' <<<"$rendered" || fail "Gateway token secret mount is missing."
 grep -Fq 'clusterIP: None' <<<"$rendered" || fail "Stateful services must use headless services."
 if grep -Fq 'type: LoadBalancer' <<<"$rendered"; then
   fail "Central services must not be public LoadBalancers."

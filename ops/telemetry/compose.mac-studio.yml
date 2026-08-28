@@ -59,8 +59,6 @@ services:
       - CLICKHOUSE_USER=otel_collector
       - CLICKHOUSE_PASSWORD
       - TELEMETRY_TTL
-    secrets:
-      - gateway_tokens
     ports:
       - "127.0.0.1:${GATEWAY_PORT:-14318}:4318"
     volumes:
@@ -162,7 +160,3 @@ volumes:
   clickhouse-data:
   collector-data:
   grafana-data:
-
-secrets:
-  gateway_tokens:
-    file: ${AGENT_TELEMETRY_GATEWAY_TOKENS_FILE:?AGENT_TELEMETRY_GATEWAY_TOKENS_FILE is required}
