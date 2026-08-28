@@ -14,6 +14,7 @@ grep -Fq 'GF_AUTH_ANONYMOUS_ENABLED=false' "$compose_file" || fail "Grafana anon
 if grep -Fq 'Tailscale-User-' "$compose_file"; then
   fail "Grafana still trusts forgeable Tailscale identity headers."
 fi
-grep -Fq 'AGENT_TELEMETRY_INGEST_TOKEN' "$compose_file" || fail "Collector ingest token is not passed to the central collector."
+grep -Fq 'gateway_tokens' "$compose_file" || fail "Gateway token secret is not mounted."
+grep -Fq 'AGENT_TELEMETRY_GATEWAY_TOKENS_FILE' "$compose_file" || fail "Gateway token file is not configured."
 
 echo "central compose security tests passed."

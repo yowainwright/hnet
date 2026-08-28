@@ -4,8 +4,7 @@ extensions:
   health_check:
     endpoint: 0.0.0.0:13133
   bearertokenauth/server:
-    tokens:
-      - ${env:AGENT_TELEMETRY_INGEST_TOKEN}
+    filename: /run/secrets/gateway_tokens
 
 receivers:
   otlp:
