@@ -1,0 +1,49 @@
+proc_list_width: 28
+scrollback: 5000
+
+procs:
+  studio-status:
+    shell: "./ops/apps/hnetctl/hnetctl status"
+    cwd: <CONFIG_DIR>/../..
+    autostart: true
+
+  edge-status:
+    shell: "./ops/apps/hnetctl/hnetctl edge-status"
+    cwd: <CONFIG_DIR>/../..
+    autostart: false
+
+  cluster-status:
+    shell: "./ops/apps/hnetctl/hnetctl cluster-status"
+    cwd: <CONFIG_DIR>/../..
+    autostart: true
+
+  k9s:
+    shell: "./ops/apps/hnetctl/hnetctl k9s pods"
+    cwd: <CONFIG_DIR>/../..
+    autostart: false
+    stop: SIGINT
+
+  collector-logs:
+    shell: "./ops/apps/hnetctl/hnetctl logs collector"
+    cwd: <CONFIG_DIR>/../..
+    autostart: false
+
+  grafana-logs:
+    shell: "./ops/apps/hnetctl/hnetctl logs grafana"
+    cwd: <CONFIG_DIR>/../..
+    autostart: false
+
+  edge-logs:
+    shell: "./ops/apps/hnetctl/hnetctl edge-logs"
+    cwd: <CONFIG_DIR>/../..
+    autostart: false
+
+  tailscale-serve:
+    shell: "./ops/apps/hnetctl/hnetctl serve"
+    cwd: <CONFIG_DIR>/../..
+    autostart: false
+
+  backup:
+    shell: "./ops/apps/hnetctl/hnetctl backup"
+    cwd: <CONFIG_DIR>/../..
+    autostart: false

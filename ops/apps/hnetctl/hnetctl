@@ -14,6 +14,12 @@ docker_bin=${TELEMETRY_DOCKER_BIN:-}
 [[ -n $edge_env ]] || edge_env="$telemetry_dir/.env.edge"
 cluster_namespace=${HNET_KUBE_NAMESPACE:-telemetry}
 cluster_release=${HNET_HELM_RELEASE:-hnet-telemetry}
+cluster_secret=${HNET_KUBE_SECRET:-hnet-telemetry-secrets}
+kube_runtime=${HNET_KUBE_RUNTIME:-orbstack}
+kube_context=${HNET_KUBE_CONTEXT:-}
+kubeconfig=${HNET_KUBECONFIG:-}
+mprocs_config=${HNET_MPROCS_CONFIG:-"$ops_dir/mprocs/hnet.yaml"}
+mprocs_log_dir=${HNET_MPROCS_LOG_DIR:-"$ops_dir/../tmp/mprocs"}
 
 fail() {
   echo "$1" >&2
@@ -79,6 +85,34 @@ tailscale_command() {
   fi
   [[ -x $app_cli ]] || fail "Missing Tailscale CLI and macOS app."
   "$app_cli" "$@"
+}
+
+orbstack_kubeconfig() {
+  printf '%s' "$HOME/.orbstack/k8s/config.yml"
+}
+
+use_orbstack_kube_defaults() {
+  [[ $kube_runtime == orbstack ]] || return
+  [[ -n $kube_context ]] || kube_context=orbstack
+  [[ -n $kubeconfig ]] || kubeconfig=$(orbstack_kubeconfig)
+}
+
+orbstack_kubernetes_enabled() {
+  local line
+  while IFS= read -r line; do
+    [[ $line == "k8s.enable: true" ]] && return 0
+  done < <(orbctl config show 2>/dev/null || true)
+  return 1
+}
+
+kube_command_args() {
+  [[ -n $kubeconfig ]] && printf '%s\0%s\0' --kubeconfig "$kubeconfig"
+  [[ -n $kube_context ]] && printf '%s\0%s\0' --context "$kube_context"
+}
+
+helm_command_args() {
+  [[ -n $kubeconfig ]] && printf '%s\0%s\0' --kubeconfig "$kubeconfig"
+  [[ -n $kube_context ]] && printf '%s\0%s\0' --kube-context "$kube_context"
 }
 
 resolved_config_value() {
@@ -356,13 +390,71 @@ edge_logs() {
 }
 
 helm_command() {
+  local args=()
   require_command helm
-  helm "$@"
+  while IFS= read -r -d '' arg; do
+    args+=("$arg")
+  done < <(helm_command_args)
+  if ((${#args[@]} > 0)); then
+    helm "${args[@]}" "$@"
+  else
+    helm "$@"
+  fi
 }
 
 kubectl_command() {
+  local args=()
   require_command kubectl
-  kubectl "$@"
+  while IFS= read -r -d '' arg; do
+    args+=("$arg")
+  done < <(kube_command_args)
+  if ((${#args[@]} > 0)); then
+    kubectl "${args[@]}" "$@"
+  else
+    kubectl "$@"
+  fi
+}
+
+ensure_orbstack_kubernetes() {
+  local allow_restart=${1:-false}
+  require_command orbctl
+  require_command kubectl
+  orbstack_kubernetes_enabled || orbctl config set k8s.enable true
+  orbctl start
+  orbctl start k8s
+  use_orbstack_kube_defaults
+
+  wait_for_orbstack_kubernetes && return
+  if [[ $allow_restart == true ]]; then
+    echo "Restarting OrbStack to apply Kubernetes enablement..."
+    orbctl stop
+    orbctl start
+    orbctl start k8s
+    wait_for_orbstack_kubernetes && return
+  fi
+
+  fail "OrbStack Kubernetes did not become ready; expected kubeconfig at $kubeconfig."
+}
+
+wait_for_orbstack_kubernetes() {
+  local attempt
+  for ((attempt = 1; attempt <= 60; attempt++)); do
+    if [[ -f $kubeconfig ]] &&
+      kubectl_command get --raw=/readyz >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+ensure_kubernetes() {
+  local allow_restart=${1:-false}
+  case "$kube_runtime" in
+  orbstack) ensure_orbstack_kubernetes "$allow_restart" ;;
+  none) return 0 ;;
+  *) fail "Unsupported HNET_KUBE_RUNTIME: $kube_runtime" ;;
+  esac
 }
 
 cluster_lint() {
@@ -374,13 +466,66 @@ cluster_template() {
 }
 
 cluster_install() {
+  ensure_kubernetes true
   helm_command upgrade --install "$cluster_release" "$telemetry_dir" \
     --namespace "$cluster_namespace" --create-namespace "$@"
 }
 
 cluster_status() {
+  ensure_kubernetes
   kubectl_command --namespace "$cluster_namespace" \
     get statefulsets,deployments,pods,services,persistentvolumeclaims
+}
+
+cluster_secrets() {
+  ensure_kubernetes true
+  load_studio_config resolve
+  validate_studio_public_config
+  validate_studio_secrets
+
+  kubectl_command create namespace "$cluster_namespace" \
+    --dry-run=client -o yaml | kubectl_command apply -f -
+
+  (
+    local tmp_env=
+
+    cleanup_secret_env() {
+      [[ -z $tmp_env ]] || rm -f "$tmp_env"
+    }
+
+    trap cleanup_secret_env EXIT
+    tmp_env=$(mktemp "${TMPDIR:-/tmp}/hnet-kube-secrets.XXXXXX")
+    chmod 600 "$tmp_env"
+    {
+      printf 'CLICKHOUSE_PASSWORD=%s\n' "$CLICKHOUSE_PASSWORD"
+      printf 'GRAFANA_CLICKHOUSE_PASSWORD=%s\n' "$GRAFANA_CLICKHOUSE_PASSWORD"
+      printf 'GF_SECURITY_ADMIN_USER=%s\n' "$GF_SECURITY_ADMIN_USER"
+      printf 'GF_SECURITY_ADMIN_PASSWORD=%s\n' "$GF_SECURITY_ADMIN_PASSWORD"
+      printf 'AGENT_TELEMETRY_MAC_STUDIO_TOKEN=%s\n' "$AGENT_TELEMETRY_MAC_STUDIO_TOKEN"
+      printf 'AGENT_TELEMETRY_MAC_MINI_1_TOKEN=%s\n' "$AGENT_TELEMETRY_MAC_MINI_1_TOKEN"
+      printf 'AGENT_TELEMETRY_MAC_MINI_2_TOKEN=%s\n' "$AGENT_TELEMETRY_MAC_MINI_2_TOKEN"
+    } >"$tmp_env"
+
+    kubectl_command --namespace "$cluster_namespace" create secret generic "$cluster_secret" \
+      --from-env-file="$tmp_env" --dry-run=client -o yaml |
+      kubectl_command apply -f -
+  )
+}
+
+cluster_bootstrap() {
+  cluster_secrets
+  cluster_install
+}
+
+k9s_open() {
+  local args=() resource
+  resource=${2:-pods}
+  ensure_kubernetes
+  require_command k9s
+  [[ -n $kubeconfig ]] && args+=(--kubeconfig "$kubeconfig")
+  [[ -n $kube_context ]] && args+=(--context "$kube_context")
+  args+=(--namespace "$cluster_namespace" --command "$resource")
+  k9s "${args[@]}"
 }
 
 bootstrap() {
@@ -389,13 +534,28 @@ bootstrap() {
   edge_start
 }
 
+operator_up() {
+  cluster_bootstrap
+  bootstrap
+}
+
+operator_mprocs() {
+  operator_up
+  require_command mprocs
+  [[ -f $mprocs_config ]] || fail "Missing mprocs config: $mprocs_config"
+  mkdir -p "$mprocs_log_dir"
+  mprocs --config "$mprocs_config" --proc-list-title hnet \
+    --log-dir "$mprocs_log_dir" --log-mode append
+}
+
 usage() {
   echo "Usage: hnetctl COMMAND"
   echo "Studio: bootstrap, start, serve, status, doctor, restart"
   echo "Data: logs SERVICE, backup [NAME], archive PROFILE [NAME]"
   echo "Backup setup: restic-init PROFILE"
   echo "Edge: edge-start, edge-status, edge-logs"
-  echo "Cluster: cluster-lint, cluster-template, cluster-install, cluster-status"
+  echo "Cluster: cluster-lint, cluster-template, cluster-secrets, cluster-install, cluster-bootstrap, cluster-status, k9s [RESOURCE]"
+  echo "Operator: up, mprocs"
 }
 
 case "${1:-}" in
@@ -416,11 +576,16 @@ edge-status) edge_status ;;
 edge-logs) edge_logs ;;
 cluster-lint) cluster_lint ;;
 cluster-template) cluster_template ;;
+cluster-secrets) cluster_secrets ;;
+cluster-bootstrap) cluster_bootstrap ;;
 cluster-install)
   shift
   cluster_install "$@"
   ;;
 cluster-status) cluster_status ;;
+k9s) k9s_open "$@" ;;
+up) operator_up ;;
+mprocs) operator_mprocs ;;
 *)
   usage
   exit 2
