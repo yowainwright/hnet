@@ -472,7 +472,13 @@ cluster_install() {
 }
 
 cluster_status() {
-  ensure_kubernetes
+  case "$kube_runtime" in
+  orbstack) use_orbstack_kube_defaults ;;
+  none) ;;
+  *) fail "Unsupported HNET_KUBE_RUNTIME: $kube_runtime" ;;
+  esac
+  kubectl_command get --raw=/readyz --request-timeout=5s >/dev/null ||
+    fail "Kubernetes is unavailable; start it explicitly before checking status."
   kubectl_command --namespace "$cluster_namespace" \
     get statefulsets,deployments,pods,services,persistentvolumeclaims
 }

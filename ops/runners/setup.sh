@@ -27,7 +27,7 @@ Options:
   --runner-name NAME      Runner name; defaults to hnet-HOST-OWNER-REPO
   --labels LABELS         Comma-separated runner labels
   --replace               Replace an existing runner with the same repo
-  --install-deps          Install the Brewfile before setup
+  --install-deps          Install CLI dependencies from mise.toml before setup
   --dry-run               Validate inputs and show the setup plan
   --help                  Show this help
 USAGE
@@ -235,8 +235,10 @@ trap cleanup EXIT
 
 [[ $(uname -s) == Darwin ]] || fail "Self-hosted Mac runners require macOS."
 if [[ $install_deps == true ]]; then
-  require_command brew
-  brew bundle --file "$script_dir/Brewfile"
+  require_command mise
+  mise -C "$repo_dir" install
+  mise_paths=$(mise -C "$repo_dir" bin-paths | paste -sd ':' -)
+  export PATH="$mise_paths:$PATH"
 fi
 require_command gh
 require_command curl

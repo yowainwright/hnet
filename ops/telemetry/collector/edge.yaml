@@ -48,6 +48,7 @@ processors:
       - context: span
         statements:
           - set(span.name, "agent.operation")
+          - set(span.status.message, "")
           - >-
             keep_matching_keys(span.attributes,
             "^(event\\.name|gen_ai\\.(operation\\.name|system|provider\\.name|request\\.model|response\\.model|usage\\.(input|output)_tokens|conversation\\.id)|conversation\\.id|session\\.id|app\\.version|model|auth_mode|session_source|originator|attempt|duration_ms|http\\.response\\.status_code|event\\.kind|(input|output|cached|reasoning|tool)_token_count|prompt_length|tool_name|call_id|decision|success|status|error\\.type)$")

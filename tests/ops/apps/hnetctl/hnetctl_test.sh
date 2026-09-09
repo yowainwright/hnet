@@ -217,6 +217,36 @@ test_hnetctl_validates_gateway_tokens() {
   run_studio_validation
 }
 
+run_cluster_status() {
+  env PATH="$test_root/bin:$PATH" \
+    HNET_KUBE_RUNTIME=orbstack \
+    HNET_KUBECONFIG="$test_root/status-kubeconfig" \
+    HNET_KUBE_CONTEXT=status-test \
+    HNET_KUBE_NAMESPACE=telemetry-test \
+    OPS_TEST_KUBECTL_LOG="$test_root/status-kubectl.log" \
+    OPS_TEST_ORBCTL_LOG="$test_root/status-orbctl.log" \
+    OPS_TEST_KUBECTL_EXIT_CODE="$1" \
+    "$repo_dir/ops/apps/hnetctl/hnetctl" cluster-status
+}
+
+test_cluster_status_never_starts_kubernetes() {
+  local kubectl_args result=0
+  run_cluster_status 0
+  kubectl_args=$(<"$test_root/status-kubectl.log")
+  assert_contains "$kubectl_args" "$test_root/status-kubeconfig"
+  assert_contains "$kubectl_args" 'status-test'
+  assert_contains "$kubectl_args" 'telemetry-test'
+  assert_contains "$kubectl_args" '--request-timeout=5s'
+  assert_contains "$kubectl_args" 'statefulsets,deployments,pods,services,persistentvolumeclaims'
+  : >"$test_root/status-kubectl.log"
+  run_cluster_status 1 >/dev/null 2>&1 || result=$?
+  [[ $result -ne 0 ]] || fail "Unavailable Kubernetes reported success."
+  [[ ! -e $test_root/status-orbctl.log ]] || fail "Status invoked OrbStack."
+  if grep -Fq 'statefulsets' "$test_root/status-kubectl.log"; then
+    fail "Status queried workloads after readiness failed."
+  fi
+}
+
 test_hnetctl_rejects_duplicate_gateway_tokens() {
   if env \
     GATEWAY_PORT="$TEST_GATEWAY_PORT" \
@@ -245,6 +275,7 @@ test_hnetctl_lints_telemetry_chart
 test_hnetctl_creates_cluster_secret_from_studio_config
 test_hnetctl_opens_k9s_with_orbstack_context
 test_hnetctl_mprocs_bootstraps_compose_and_kubernetes
+test_cluster_status_never_starts_kubernetes
 test_hnetctl_validates_gateway_tokens
 test_hnetctl_rejects_duplicate_gateway_tokens
 
