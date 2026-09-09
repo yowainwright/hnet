@@ -12,6 +12,8 @@ jobs:
   validate:
     runs-on: ${{ vars.HNET_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
+    env:
+      MISE_DATA_DIR: ${{ runner.temp }}/hnet-mise-${{ github.run_id }}-${{ github.run_attempt }}
 
     steps:
       - name: Checkout repository
@@ -19,20 +21,26 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install shell tools
-        run: |
-          if [ "$RUNNER_OS" = "macOS" ]; then
-            brew list shellcheck >/dev/null 2>&1 || brew install shellcheck
-          else
-            sudo apt-get update
-            sudo apt-get install --yes shellcheck zsh
-          fi
+      - name: Install project tools
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+        with:
+          version: 2026.9.0
+          cache: false
+
+      - name: Install Linux system packages
+        if: runner.os == 'Linux'
+        run: mise bootstrap --only packages --update --yes
 
       - name: Run lint
-        run: ./ops/scripts/lint.sh
+        run: ./ops/scripts/lint.sh --strict
 
       - name: Run tests
-        run: find tests -type f -name '*_test.sh' -exec {} \;
+        shell: bash
+        run: |
+          find tests -type f -name '*_test.sh' -print0 |
+            while IFS= read -r -d '' test_file; do
+              "$test_file" || exit "$?"
+            done
 
       - name: Validate central Compose configuration
         run: |

@@ -79,7 +79,10 @@ create)
 apply)
   cat >/dev/null
   ;;
-get | config)
+get)
+  exit "${OPS_TEST_KUBECTL_EXIT_CODE:-0}"
+  ;;
+config)
   ;;
 *)
   ;;

@@ -9,6 +9,7 @@ typeset -g _AGENT_TELEMETRY_LOADED=1
 typeset -g _AGENT_TELEMETRY_CATEGORY=""
 typeset -g _AGENT_TELEMETRY_PROJECT="unlabeled"
 typeset -gF _AGENT_TELEMETRY_STARTED=0
+typeset -gi _AGENT_TELEMETRY_SENDER_PID=0
 
 _agent_telemetry_safe_label() {
   local label="$1"
@@ -60,7 +61,13 @@ _agent_telemetry_precmd() {
   [[ -n "$_AGENT_TELEMETRY_CATEGORY" ]] || return
 
   local duration_ms=$(( (EPOCHREALTIME - _AGENT_TELEMETRY_STARTED) * 1000 ))
-  _agent_telemetry_send "$duration_ms" "$exit_code"
+  if (( _AGENT_TELEMETRY_SENDER_PID > 0 )) &&
+      kill -0 "$_AGENT_TELEMETRY_SENDER_PID" 2>/dev/null; then
+    _AGENT_TELEMETRY_CATEGORY=""
+    return 0
+  fi
+  _agent_telemetry_send "$duration_ms" "$exit_code" </dev/null >/dev/null 2>&1 &!
+  _AGENT_TELEMETRY_SENDER_PID=$!
   _AGENT_TELEMETRY_CATEGORY=""
 }
 
