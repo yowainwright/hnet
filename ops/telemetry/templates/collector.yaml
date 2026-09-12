@@ -40,6 +40,12 @@ spec:
               drop:
                 - ALL
           env:
+            - name: AGENT_TELEMETRY_REDACT_PATTERN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "hnet-telemetry.secretName" . }}
+                  key: {{ .Values.secret.keys.redactPattern }}
+                  optional: true
             - name: CLICKHOUSE_USER
               value: otel_collector
             - name: CLICKHOUSE_PASSWORD

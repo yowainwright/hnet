@@ -101,10 +101,92 @@ EOF
 
 }
 
+test_hnetctl_loads_private_redaction_pattern() {
+  local config="$test_root/redaction.env" script
+  local pattern='\Qperson@example.invalid\E|\Q123 Example Street (Unit 3)\E'
+  printf 'AGENT_TELEMETRY_REDACT_PATTERN=%s\n' "$pattern" >"$config"
+  # shellcheck disable=SC2016 # Variables expand in the child Bash process.
+  script=$hnetctl_source'
+unset AGENT_TELEMETRY_REDACT_PATTERN
+load_studio_config observe
+[[ -z ${AGENT_TELEMETRY_REDACT_PATTERN+set} ]] || exit 1
+load_studio_config resolve
+[[ $AGENT_TELEMETRY_REDACT_PATTERN == "$EXPECTED_REDACTION_PATTERN" ]] || exit 1
+unset AGENT_TELEMETRY_REDACT_PATTERN
+load_edge_config
+[[ $AGENT_TELEMETRY_REDACT_PATTERN == "$EXPECTED_REDACTION_PATTERN" ]]'
+  env TELEMETRY_STUDIO_ENV="$config" TELEMETRY_EDGE_ENV="$config" \
+    EXPECTED_REDACTION_PATTERN="$pattern" bash -c "$script" "$repo_dir/ops/apps/hnetctl/hnetctl"
+}
+
 test_hnetctl_lints_telemetry_chart() {
   local output
   output=$("$repo_dir/ops/apps/hnetctl/hnetctl" cluster-lint)
   assert_contains "$output" "1 chart(s) linted"
+}
+
+test_hnetctl_validates_redaction_patterns() {
+  local pattern output script
+  script=$hnetctl_source$'\nvalidate_redaction_pattern\n[[ -n $AGENT_TELEMETRY_REDACT_PATTERN ]]'
+  for pattern in '' 'a^' '\Qperson@example.invalid\E' '(?i)\Q123 Example Street\E|\Qunit 3\E'; do
+    env AGENT_TELEMETRY_REDACT_PATTERN="$pattern" bash -c "$script" "$repo_dir/ops/apps/hnetctl/hnetctl"
+  done
+  for pattern in '[synthetic-private-pattern' '\Q\E' '\Qsynthetic-private-pattern\E|' \
+    $'\\Qsynthetic-private-pattern\nEXTRA=value\\E' $'\\Qsynthetic-private-pattern\rEXTRA=value\\E'; do
+    if output=$(env AGENT_TELEMETRY_REDACT_PATTERN="$pattern" \
+      bash -c "$script" "$repo_dir/ops/apps/hnetctl/hnetctl" 2>&1); then
+      fail "Invalid personal pattern was accepted."
+    fi
+    [[ $output != *synthetic-private-pattern* ]] || fail "Personal pattern appeared in validation output."
+  done
+}
+
+run_redaction_start() {
+  local script
+  # shellcheck disable=SC2016 # Variables expand in the child Bash process.
+  script=$hnetctl_source'
+ensure_docker() { :; }
+ensure_kubernetes() { :; }
+cluster_install() { :; }
+studio_serve() { :; }
+wait_for_grafana() { :; }
+docker_command() {
+  local expected=$EXPECTED_STUDIO_PATTERN
+  [[ $* != *compose.edge.yml* ]] || expected=$EXPECTED_EDGE_PATTERN
+  [[ $AGENT_TELEMETRY_REDACT_PATTERN == "$expected" ]] || fail "Compose personal matches changed."
+}
+kubectl_command() {
+  local arg key value
+  for arg in "$@"; do
+    [[ $arg == --from-env-file=* ]] || continue
+    while IFS="=" read -r key value; do
+      [[ $key == AGENT_TELEMETRY_REDACT_PATTERN ]] || continue
+      [[ $value == "$EXPECTED_STUDIO_PATTERN" ]] || fail "Secret personal matches changed."
+      return
+    done <"${arg#--from-env-file=}"
+    fail "Secret personal matches missing."
+  done
+  [[ $* != *apply* ]] || cat >/dev/null
+}
+"$TEST_START_COMMAND"
+"$TEST_START_COMMAND"
+[[ ${AGENT_TELEMETRY_REDACT_PATTERN:-} == "$TEST_INHERITED_PATTERN" ]]'
+  env TELEMETRY_STUDIO_ENV="$test_root/pattern-studio.env" TELEMETRY_EDGE_ENV="$test_root/pattern-edge.env" \
+    TEST_START_COMMAND="$1" TEST_INHERITED_PATTERN="$2" AGENT_TELEMETRY_REDACT_PATTERN="$2" \
+    EXPECTED_STUDIO_PATTERN="$3" EXPECTED_EDGE_PATTERN="$4" \
+    bash -c "$script" "$repo_dir/ops/apps/hnetctl/hnetctl"
+}
+
+# shellcheck disable=SC2016 # Dollar signs are literal regression data.
+test_hnetctl_preserves_personal_patterns_during_startup() {
+  write_studio_env "$test_root/pattern-studio.env"
+  write_edge_env "$test_root/pattern-edge.env"
+  printf '%s\n' 'AGENT_TELEMETRY_REDACT_PATTERN=\Qedge$$tag@example.invalid\E' >>"$test_root/pattern-edge.env"
+  run_redaction_start bootstrap '' 'a^' '\Qedge$$$$tag@example.invalid\E'
+  printf '%s\n' 'AGENT_TELEMETRY_REDACT_PATTERN=\Qstudio$$tag@example.invalid\E' >>"$test_root/pattern-studio.env"
+  run_redaction_start operator_up '' '\Qstudio$$$$tag@example.invalid\E' '\Qedge$$$$tag@example.invalid\E'
+  run_redaction_start operator_up '\Qoverride$$tag@example.invalid\E' \
+    '\Qoverride$$$$tag@example.invalid\E' '\Qoverride$$$$tag@example.invalid\E'
 }
 
 test_hnetctl_creates_cluster_secret_from_studio_config() {
@@ -271,6 +353,9 @@ validate_studio_secrets" "$repo_dir/ops/apps/hnetctl/hnetctl"; then
 make_fake_tools
 test_hnetctl_resolves_the_ops_telemetry_path
 test_hnetctl_validates_edge_ingest_token
+test_hnetctl_loads_private_redaction_pattern
+test_hnetctl_validates_redaction_patterns
+test_hnetctl_preserves_personal_patterns_during_startup
 test_hnetctl_lints_telemetry_chart
 test_hnetctl_creates_cluster_secret_from_studio_config
 test_hnetctl_opens_k9s_with_orbstack_context
