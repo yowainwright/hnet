@@ -24,18 +24,19 @@ write_transform() {
   local name=$1
   awk -v name="$name" '
     /^  transform\/privacy:/ { copying = 1; print "  transform/" name ":"; next }
-    copying && /^[^ ]|^  [^ ]/ { exit }
+    /^  redaction\/sensitive:/ { copying = 1; print "  redaction/" name ":"; next }
+    copying && /^[^ ]|^  [^ ]/ { copying = 0 }
     copying { print }
   ' "$repo_dir/ops/telemetry/collector/$name.yaml"
 }
 
 write_collector_config() {
-  local name=$1 processors="transform/$1"
+  local name=$1 processors="transform/$1, redaction/$1"
   printf 'receivers:\n  otlpjsonfile:\n    include: [/test/input.json]\n    start_at: beginning\nprocessors:\n'
   if [[ $name == combined ]]; then
     write_transform edge
     write_transform gateway
-    processors='transform/edge, transform/gateway'
+    processors='transform/edge, redaction/edge, transform/gateway, redaction/gateway'
   else
     write_transform "$name"
   fi
@@ -71,10 +72,28 @@ wait_for_export() {
   fail "Collector did not export all three synthetic signals."
 }
 
+compose_redaction_pattern() {
+  local script
+  script=$(sed '/^case "${1:-}"/,$d' "$repo_dir/ops/apps/hnetctl/hnetctl")
+  script+=$'\nstudio_compose config --format json\nedge_compose config --format json'
+  # Compose config escapes dollars for serialization; undo that display-only layer.
+  env AGENT_TELEMETRY_REDACT_PATTERN="$1" TELEMETRY_DOCKER_BIN="$(command -v docker)" \
+    TELEMETRY_STUDIO_ENV="$repo_dir/ops/telemetry/.env.mac-studio.example" \
+    TELEMETRY_EDGE_ENV="$repo_dir/ops/telemetry/.env.edge.example" \
+    bash -c "$script" "$repo_dir/ops/apps/hnetctl/hnetctl" |
+    jq -e -r -s 'map(.services.collector.environment.AGENT_TELEMETRY_REDACT_PATTERN) | unique
+      | if length == 1 then .[0] | split("$$") | join("$")
+        else error("Compose personal patterns differ") end'
+}
+
 start_collector() {
   local fixture=$1
+  local pattern=${2-'\Qsynthetic-private-email@example.invalid\E|\Qsynthetic-private-address (Unit 3)\E'}
+  local personal_env=()
+  [[ -z $pattern ]] || personal_env=(--env "AGENT_TELEMETRY_REDACT_PATTERN=$(compose_redaction_pattern "$pattern")")
   container_id=$(docker run --detach --network none --read-only --cap-drop ALL \
     --security-opt no-new-privileges --user "$(id -u):$(id -g)" \
+    "${personal_env[@]}" \
     --mount "type=bind,src=$fixture,dst=/test" "$image" --config=/test/config.yaml)
 }
 
@@ -91,7 +110,7 @@ assert_signals() {
 
 assert_private_markers_absent() {
   local name=$1 output=$2 markers
-  markers=$(jq -r -s '[.. | strings | scan("synthetic-private-[a-z-]+")]
+  markers=$(jq -r -s '[.. | strings | scan("synthetic-private-[a-z-]+|4111[ -]?1111[ -]?1111[ -]?1111|cvv=987|cvc=654")]
     | unique | length' "$output")
   [[ $markers -gt 0 ]] || return 0
   printf '%s retained %s forbidden synthetic markers.\n' "$name" "$markers" >&2
@@ -113,6 +132,42 @@ test_privacy() {
   stop_collector
   assert_signals "$fixture/output.json"
   assert_private_markers_absent "$name" "$fixture/output.json"
+}
+
+test_default_pattern() {
+  local fixture="$test_root/default-pattern"
+  prepare_fixture edge "$fixture"
+  jq -c 'walk(if type == "string" and
+    (. == "synthetic-private-email@example.invalid" or . == "synthetic-private-address (Unit 3)")
+    then "unlisted@example.invalid" else . end)' "$fixture/input.json" >"$fixture/default.json"
+  mv "$fixture/default.json" "$fixture/input.json"
+  start_collector "$fixture" ""
+  wait_for_export "$fixture/output.json"
+  stop_collector
+  assert_signals "$fixture/output.json"
+  assert_private_markers_absent default "$fixture/output.json"
+  jq -e -s 'any(.. | strings; . == "unlisted@example.invalid")' "$fixture/output.json" >/dev/null ||
+    fail "An empty personal pattern removed unlisted metadata."
+}
+
+test_literal_dollars() {
+  local name=$1 fixture="$test_root/$1-dollars"
+  # shellcheck disable=SC2016 # Dollar signs are literal regression data.
+  local pattern='\Qperson$$tag@example.invalid\E|\Q${env:HNET_TEST_LITERAL}\E'
+  prepare_fixture "$name" "$fixture"
+  jq -c 'walk(if type == "object" then
+    if .key == "originator" then .value.stringValue = "person$$tag@example.invalid"
+    elif .key == "session_source" then .value.stringValue = "person$tag@example.invalid"
+    elif .key == "auth_mode" then .value.stringValue = "${env:HNET_TEST_LITERAL}"
+    else . end else . end)' "$fixture/input.json" >"$fixture/dollars.json"
+  mv "$fixture/dollars.json" "$fixture/input.json"
+  start_collector "$fixture" "$pattern"
+  wait_for_export "$fixture/output.json"
+  stop_collector
+  jq -e -s '[.. | objects | select(.key == "originator" or .key == "auth_mode" or .key == "session_source")]
+    | length > 0 and all(.value.stringValue ==
+      (if .key == "session_source" then "person$tag@example.invalid" else "****" end))' \
+    "$fixture/output.json" >/dev/null || fail "$name changed literal dollar matches."
 }
 
 inject_transform_error() {
@@ -216,7 +271,7 @@ wait_for_outage() {
 
 assert_queue_sanitized() {
   local name=$1 directory=$2 result=0
-  grep -aR 'synthetic-private-' "$directory" >/dev/null || result=$?
+  grep -aRE 'synthetic-private-|4111[ -]?1111[ -]?1111[ -]?1111|cvv=987|cvc=654' "$directory" >/dev/null || result=$?
   [[ $result -le 1 ]] || fail "$name queue privacy scan failed."
   [[ $result -eq 0 ]] || return 0
   echo "$name persisted forbidden synthetic markers before replay." >&2
@@ -263,6 +318,10 @@ test_queue_replay() {
 test_privacy edge
 test_privacy gateway
 test_privacy combined
+test_default_pattern
+test_literal_dollars edge
+test_literal_dollars gateway
+test_literal_dollars combined
 test_transform_failure edge
 test_transform_failure gateway
 test_queue_replay edge

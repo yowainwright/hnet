@@ -18,6 +18,7 @@ secret:
     macStudioToken: AGENT_TELEMETRY_MAC_STUDIO_TOKEN
     macMini1Token: AGENT_TELEMETRY_MAC_MINI_1_TOKEN
     macMini2Token: AGENT_TELEMETRY_MAC_MINI_2_TOKEN
+    redactPattern: AGENT_TELEMETRY_REDACT_PATTERN
 
 telemetry:
   ttl: 336h

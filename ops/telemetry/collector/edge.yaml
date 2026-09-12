@@ -39,7 +39,7 @@ processors:
     trace_statements:
       - context: scope
         statements:
-          - keep_matching_keys(scope.attributes, "^$")
+          - keep_keys(scope.attributes, [])
       - context: resource
         statements:
           - >-
@@ -61,7 +61,7 @@ processors:
     log_statements:
       - context: scope
         statements:
-          - keep_matching_keys(scope.attributes, "^$")
+          - keep_keys(scope.attributes, [])
       - context: resource
         statements:
           - >-
@@ -76,7 +76,7 @@ processors:
     metric_statements:
       - context: scope
         statements:
-          - keep_matching_keys(scope.attributes, "^$")
+          - keep_keys(scope.attributes, [])
       - context: resource
         statements:
           - >-
@@ -87,6 +87,15 @@ processors:
           - >-
             keep_matching_keys(datapoint.attributes,
             "^(gen_ai\\.(operation\\.name|system|provider\\.name|request\\.model|response\\.model|token\\.type)|app\\.version|model|auth_mode|session_source|originator|status|success|kind|tool|token_type|type|error\\.type)$")
+  redaction/sensitive:
+    allow_all_keys: true
+    redact_all_types: true
+    summary: silent
+    blocked_values:
+      - '(?i)\bBearer\s+[A-Za-z0-9._~+/-]+=*'
+      - '(?i)(\b|_)(password|passwd|pwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|cvv|cvc)["'']?\s*[:=]\s*("([^"\\]|\\.)*"|''([^''\\]|\\.)*''|[^\s,;}\]]+)'
+      - '\b(?:[0-9][ -]?){12,18}[0-9]\b'
+      - ${env:AGENT_TELEMETRY_REDACT_PATTERN:-a^}
 exporters:
   otlphttp/central:
     endpoint: ${env:AGENT_TELEMETRY_UPSTREAM}
@@ -120,6 +129,7 @@ service:
       processors:
         - memory_limiter
         - transform/privacy
+        - redaction/sensitive
         - resource/host
       exporters:
         - otlphttp/central
@@ -129,6 +139,7 @@ service:
       processors:
         - memory_limiter
         - transform/privacy
+        - redaction/sensitive
         - resource/host
       exporters:
         - otlphttp/central
@@ -138,6 +149,7 @@ service:
       processors:
         - memory_limiter
         - transform/privacy
+        - redaction/sensitive
         - resource/host
       exporters:
         - otlphttp/central
