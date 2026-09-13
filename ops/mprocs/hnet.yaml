@@ -3,17 +3,17 @@ scrollback: 5000
 
 procs:
   studio-status:
-    shell: "./ops/apps/hnetctl/hnetctl status"
+    shell: "while :; do ./ops/apps/hnetctl/hnetctl status; sleep 5; done"
     cwd: <CONFIG_DIR>/../..
     autostart: true
 
   edge-status:
-    shell: "./ops/apps/hnetctl/hnetctl edge-status"
+    shell: "while :; do ./ops/apps/hnetctl/hnetctl edge-status; sleep 5; done"
     cwd: <CONFIG_DIR>/../..
     autostart: false
 
   cluster-status:
-    shell: "./ops/apps/hnetctl/hnetctl cluster-status"
+    shell: "while :; do ./ops/apps/hnetctl/hnetctl cluster-status; sleep 5; done"
     cwd: <CONFIG_DIR>/../..
     autostart: true
 
