@@ -1,6 +1,25 @@
 name: agent-telemetry-edge
 
 services:
+  collector-data-init:
+    image: clickhouse/clickhouse-server:26.4.4.38
+    restart: "no"
+    user: "0:0"
+    command:
+      - sh
+      - -c
+      - chown -R 10001:10001 /var/lib/otelcol
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - collector-edge-data:/var/lib/otelcol
+    network_mode: none
+
   collector:
     image: otel/opentelemetry-collector-contrib:0.153.0
     restart: unless-stopped
@@ -16,6 +35,7 @@ services:
       AGENT_TELEMETRY_HOST: ${AGENT_TELEMETRY_HOST}
       AGENT_TELEMETRY_INGEST_TOKEN: ${AGENT_TELEMETRY_INGEST_TOKEN:?AGENT_TELEMETRY_INGEST_TOKEN is required}
       AGENT_TELEMETRY_QUEUE_DIR: /var/lib/otelcol
+      AGENT_TELEMETRY_REDACT_PATTERN: ${AGENT_TELEMETRY_REDACT_PATTERN:-a^}
     ports:
       - "127.0.0.1:4317:4317"
       - "127.0.0.1:4318:4318"
@@ -24,6 +44,9 @@ services:
       - collector-edge-data:/var/lib/otelcol
     tmpfs:
       - /tmp
+    depends_on:
+      collector-data-init:
+        condition: service_completed_successfully
     healthcheck:
       test:
         - CMD

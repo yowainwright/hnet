@@ -59,5 +59,63 @@ TOOL
 printf '%s\n' "$@" >> "${OPS_TEST_HELM_LOG:?}"
 TOOL
 
-  chmod +x "$fake_bin/shellcheck" "$fake_bin/zsh" "$fake_bin/shfmt" "$fake_bin/docker" "$fake_bin/helm"
+  cat >"$fake_bin/kubectl" <<'TOOL'
+#!/bin/sh
+printf '%s\n' "$@" >> "${OPS_TEST_KUBECTL_LOG:?}"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+  --kubeconfig | --context | --namespace)
+    shift 2
+    ;;
+  *)
+    break
+    ;;
+  esac
+done
+case "${1:-}" in
+create)
+  printf 'apiVersion: v1\nkind: List\nitems: []\n'
+  ;;
+apply)
+  cat >/dev/null
+  ;;
+get)
+  exit "${OPS_TEST_KUBECTL_EXIT_CODE:-0}"
+  ;;
+config)
+  ;;
+*)
+  ;;
+esac
+TOOL
+
+  cat >"$fake_bin/orbctl" <<'TOOL'
+#!/bin/sh
+printf '%s\n' "$@" >> "${OPS_TEST_ORBCTL_LOG:?}"
+TOOL
+
+  cat >"$fake_bin/k9s" <<'TOOL'
+#!/bin/sh
+printf '%s\n' "$@" >> "${OPS_TEST_K9S_LOG:?}"
+TOOL
+
+  cat >"$fake_bin/mprocs" <<'TOOL'
+#!/bin/sh
+printf '%s\n' "$@" >> "${OPS_TEST_MPROCS_LOG:?}"
+TOOL
+
+  cat >"$fake_bin/curl" <<'TOOL'
+#!/bin/sh
+printf '%s\n' "$@" >> "${OPS_TEST_CURL_LOG:?}"
+TOOL
+
+  cat >"$fake_bin/tailscale" <<'TOOL'
+#!/bin/sh
+printf '%s\n' "$@" >> "${OPS_TEST_TAILSCALE_LOG:?}"
+TOOL
+
+  chmod +x "$fake_bin/shellcheck" "$fake_bin/zsh" "$fake_bin/shfmt" \
+    "$fake_bin/docker" "$fake_bin/helm" "$fake_bin/kubectl" \
+    "$fake_bin/orbctl" "$fake_bin/k9s" "$fake_bin/mprocs" \
+    "$fake_bin/curl" "$fake_bin/tailscale"
 }

@@ -1,4 +1,0 @@
-brew "gh"
-brew "helm"
-brew "shellcheck"
-brew "shfmt"

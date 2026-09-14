@@ -4,6 +4,7 @@ set -euo pipefail
 
 script_path=${BASH_SOURCE[0]}
 script_dir=$(cd -- "${script_path%/*}" && pwd)
+repo_dir=$(cd -- "$script_dir/../.." && pwd)
 setup_script="$script_dir/setup.sh"
 account=${HNET_GITHUB_ACCOUNT:-}
 runner_root=${HNET_RUNNER_ROOT:-"$HOME/.hnet/runners"}
@@ -24,7 +25,7 @@ Options:
   --runner-root PATH      Runner storage; defaults to ~/.hnet/runners
   --labels LABELS         Comma-separated runner labels
   --replace               Replace existing runners
-  --install-deps          Install the runner Brewfile once
+  --install-deps          Install CLI dependencies from mise.toml once
   --dry-run               Show the per-repository setup plan
   --help                  Show this help
 USAGE
@@ -80,6 +81,12 @@ done
 
 [[ $dry_run != true || $install_deps != true ]] ||
   fail "--dry-run cannot be combined with --install-deps."
+if [[ $install_deps == true ]]; then
+  require_command mise
+  mise -C "$repo_dir" install
+  mise_paths=$(mise -C "$repo_dir" bin-paths | paste -sd ':' -)
+  export PATH="$mise_paths:$PATH"
+fi
 require_command gh
 [[ -x $setup_script ]] || fail "Missing runner setup script: $setup_script"
 gh auth status >/dev/null 2>&1 || fail "Authenticate GitHub CLI before setup: gh auth login"
@@ -93,7 +100,6 @@ private_repos=$(gh repo list "$account" --visibility private --limit 1000 \
   exit 0
 }
 
-first_repo=true
 repo_count=0
 while IFS= read -r repo; do
   [[ -n $repo ]] || continue
@@ -102,10 +108,6 @@ while IFS= read -r repo; do
   [[ -n $labels ]] && repo_args+=(--labels "$labels")
   [[ $replace == true ]] && repo_args+=(--replace)
   [[ $dry_run == true ]] && repo_args+=(--dry-run)
-  if [[ $first_repo == true && $install_deps == true ]]; then
-    repo_args+=(--install-deps)
-    first_repo=false
-  fi
   echo "Setting up runner $repo_count: $repo"
   "$setup_script" "${repo_args[@]}"
 done <<<"$private_repos"

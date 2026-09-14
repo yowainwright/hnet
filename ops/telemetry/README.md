@@ -1,7 +1,7 @@
 # Telemetry
 
 Each Mac sends OpenTelemetry data to a loopback collector. The collector applies
-the default-deny policy in the [root README](../../README.md#what-stays-private), queues sanitized data,
+the filtering and masking in the [root README](../../README.md#what-stays-private), queues the results,
 and forwards it through private Tailscale HTTPS to the central Mac. ClickHouse
 stores the signals and Grafana renders the dashboards.
 
@@ -31,8 +31,40 @@ cp ops/telemetry/.env.mac-studio.example ops/telemetry/.env.mac-studio
 ./ops/apps/hnetctl/hnetctl status
 ```
 
-The environment file may contain 1Password references. Resolved secrets are
-exported only to Docker Compose and are never written back to disk.
+The environment file may contain 1Password references. Resolved values are not
+written back to that file. Kubernetes setup also copies them into its Secret.
+
+## Personal matches
+
+<!-- personal masking configuration from collector/edge.yaml, collector/gateway.yaml, and ../apps/hnetctl/hnetctl -->
+
+Set `AGENT_TELEMETRY_REDACT_PATTERN` in each private edge/central environment
+file, or use a 1Password field reference. It adds your known emails, addresses,
+or other sensitive values to attribute masking. The default `a^` matches nothing.
+These invented values are matched literally with `\Q...\E` and separated with `|`:
+
+```dotenv
+AGENT_TELEMETRY_REDACT_PATTERN=\Qperson@example.invalid\E|\Q123 Example Street\E
+```
+
+Use the same pattern on every collector. Matching is case-sensitive unless the
+pattern starts with `(?i)`. `hnetctl` accepts only nonempty `\Qliteral\E` entries
+separated by `|`, on one line; arbitrary regex syntax and `\E` inside an entry
+are rejected without printing the value. Empty settings become `a^`.
+Put actual personal details only in ignored environment files or 1Password.
+Enter dollar signs literally; `hnetctl` escapes them for the collector.
+
+After approval, `start`/`edge-start` recreate changed Compose containers with the
+resolved pattern; `restart` alone does not refresh their environment.
+`cluster-secrets` supplies the pattern to the Kubernetes Secret; the collector
+pod must also be replaced to refresh its environment. When managing that Secret
+directly, double each `$` in the literal pattern to escape collector expansion
+(for example, `person$$tag` for `person$tag`). Omit the optional key or set `a^`
+to disable personal matching. Do not print resolved collector configuration or
+enable debug payload logging. Coverage and limitations are in the root privacy
+section.
+
+## Gateway tokens
 
 Create one 1Password item named `agent-telemetry` with the three gateway token
 fields: `mac-studio-token`, `mac-mini-1-token`, and `mac-mini-2-token`.

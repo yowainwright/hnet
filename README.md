@@ -71,8 +71,8 @@ sequenceDiagram
 
 <!-- privacy guarantees derived from ops/telemetry/collector/edge.yaml and gateway.yaml -->
 
-Telemetry is default-deny. hnet keeps operational signal while excluding the
-content of private work.
+hnet keeps useful operational metadata. Private access and authentication are
+the primary boundary; masking sensitive values is an additional safeguard.
 
 | Source | Stored signal |
 | --- | --- |
@@ -80,13 +80,23 @@ content of private work.
 | Dotfiles | Setup event name, package name, package manager, tool name, tool version, duration, status, success flag, host identity, timestamp |
 | Agents | Service, model, operation, token counts, session ID, status, safe tool name, duration, app version, host identity, timestamp |
 
-Never stored: command text or output, prompts or completions, tool contents,
-environment variables, paths, account identifiers, exception messages, or
-request and response bodies.
+Collection scope is unchanged: attribute allowlists still apply, and log bodies
+and span status messages are emptied.
+Model names, scope metadata, metric names/units/descriptions, links, and exemplars
+are retained.
 
-Redaction runs on the Mac and again at the central gateway. A redaction failure
-drops the affected payload. The private Tailscale gateway preserves the edge
-host identity and supplies `central-gateway` only when no host is present.
+Both collectors mask recognized credential assignments, bearer tokens,
+13-19 digit card-like values (including spaces or hyphens), and configured
+personal matches in retained attributes. Numeric attribute values are checked
+too. Configure your email, address, and other known values privately as described
+in [Telemetry](ops/telemetry/README.md#personal-matches).
+
+This is pattern matching, not a guarantee of detecting every secret. Scalar
+metadata (such as names and descriptions), span links, and metric exemplars are
+not scanned. Unknown credentials and unlisted personal information can remain;
+long numeric identifiers can match the card pattern. Transform errors drop the
+affected payload. The gateway assigns host labels from each authenticated Mac's
+receiver.
 
 ## Access and retention
 
