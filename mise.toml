@@ -1,0 +1,22 @@
+min_version = "2026.9.0"
+
+# CLI versions match the locally validated toolchain.
+[tools]
+"aqua:1password/cli" = "v2.39.0"
+gh = "2.99.0"
+helm = "4.2.4"
+jq = "1.7.1"
+k9s = "0.51.0"
+kubectl = "1.33.9"
+mprocs = "0.9.6"
+restic = "0.19.1"
+shellcheck = "0.11.0"
+shfmt = "3.14.0"
+
+# OrbStack supplies Docker, Compose, and orbctl on the supported Mac hosts.
+# Linux CI runners supply Docker and Compose; zsh is their extra OS package.
+# Bash, curl, Git, tar, and the standard Unix utilities are host prerequisites.
+[bootstrap.packages]
+"apt:zsh" = { version = "latest", os = "linux" }
+"brew-cask:orbstack" = { version = "latest", os = "macos", adopt = true }
+"brew-cask:tailscale-app" = { version = "latest", os = "macos", adopt = true }

@@ -2,14 +2,34 @@
 
 set -euo pipefail
 
+script_path=${BASH_SOURCE[0]}
+script_dir=$(cd -- "${script_path%/*}" && pwd)
+# shellcheck source=tests/ops/test_support.sh
+source "$script_dir/../test_support.sh"
+
 chart_dir=ops/telemetry
 
-fail() {
-  echo "$1" >&2
-  exit 1
+test_chart_excludes_private_files() {
+  local fixture="$test_root/chart" archive_files directory
+  mkdir -p "$fixture/collector"
+  cp "$chart_dir/Chart.yaml" "$chart_dir/.helmignore" "$fixture/"
+  printf 'synthetic\n' >"$fixture/.env"
+  printf 'synthetic\n' >"$fixture/.env.local"
+  printf 'safe\n' >"$fixture/collector/safe.yaml"
+  for directory in backups data queues; do
+    mkdir -p "$fixture/$directory/nested"
+    printf 'synthetic\n' >"$fixture/$directory/nested/private.txt"
+  done
+  helm package "$fixture" --destination "$test_root" >/dev/null
+  archive_files=$(tar -tzf "$test_root/hnet-telemetry-0.1.0.tgz")
+  assert_contains "$archive_files" 'collector/safe.yaml'
+  if grep -Eq '/(\.env[^/]*|backups|data|queues)(/|$)' <<<"$archive_files"; then
+    fail "Helm packaged private files."
+  fi
 }
 
 command -v helm >/dev/null 2>&1 || fail "Missing required command: helm"
+test_chart_excludes_private_files
 
 helm lint "$chart_dir"
 rendered=$(helm template hnet-telemetry "$chart_dir" --namespace telemetry)
