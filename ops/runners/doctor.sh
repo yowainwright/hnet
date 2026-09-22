@@ -32,10 +32,15 @@ validate_repo() {
   local owner repo_name
   owner=${repo%%/*}
   repo_name=${repo#*/}
-  [[ -n $owner && -n $repo_name && $repo_name != */* ]] ||
+  if [[ $repo != */* || -z $owner || -z $repo_name || $repo_name == */* ]]; then
     warn "repository must use OWNER/REPO format: $repo"
+    return 1
+  fi
   case "$owner$repo_name" in
-  *[!A-Za-z0-9_.-]*) warn "repository contains unsupported characters: $repo" ;;
+  *[!A-Za-z0-9_.-]*)
+    warn "repository contains unsupported characters: $repo"
+    return 1
+    ;;
   esac
 }
 
@@ -167,8 +172,9 @@ if command -v gh >/dev/null 2>&1; then
 fi
 
 if [[ -n $repo ]]; then
-  validate_repo
-  check_runner "$runner_root/$(repo_key "$repo")"
+  if validate_repo; then
+    check_runner "$runner_root/$(repo_key "$repo")"
+  fi
 elif [[ -d $runner_root ]]; then
   runner_found=false
   while IFS= read -r runner_dir; do

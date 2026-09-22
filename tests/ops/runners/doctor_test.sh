@@ -63,6 +63,20 @@ test_help() {
   assert_contains "$output" '--repo OWNER/REPO'
 }
 
+test_doctor_rejects_malformed_repositories() {
+  local fake_bin invalid_repo output
+  fake_bin=$(make_doctor_fakes)
+  for invalid_repo in missing-slash /name owner/ owner/repo/extra; do
+    if output=$(PATH="$fake_bin:$PATH" "$repo_dir/ops/runners/doctor.sh" \
+      --repo "$invalid_repo" 2>&1); then
+      fail 'Runner doctor accepted an invalid repository.'
+    fi
+    assert_contains "$output" 'repository must use OWNER/REPO format'
+    [[ $output != *'runner directory is missing'* ]] || fail 'Doctor inspected an invalid repository.'
+  done
+}
+
 test_doctor_passes
 test_help
+test_doctor_rejects_malformed_repositories
 echo "runner doctor tests passed."

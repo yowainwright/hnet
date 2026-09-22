@@ -18,4 +18,13 @@ grep -Fq "LogAttributes['event.name'] = 'dotfiles.npm_global_install'" "$views_f
 grep -Fq 'otel.dotfiles_installs' "$dashboard_file" || fail "Dotfiles dashboard query is missing."
 grep -Fq 'Recent dotfiles installs' "$dashboard_file" || fail "Dotfiles dashboard panel is missing."
 
+# Filter individual events before aggregation, including partial five-minute buckets.
+jq -e '
+  [.panels[].targets[].rawSql] | length == 15 and all(.[];
+    contains("$__timeFilter(") and
+    (test("FROM otel\\.agent_(sessions|inventory|hosts|calls_5m|tokens_5m)\\b") | not) and
+    ((contains("GROUP BY") | not) or test("WHERE[^;]*\\$__timeFilter\\([^)]*\\)[^;]*GROUP BY"))
+  )
+' "$dashboard_file" >/dev/null || fail "Dashboard queries must filter events within the selected time range."
+
 echo "dashboard view tests passed."

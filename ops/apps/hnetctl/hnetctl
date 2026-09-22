@@ -60,6 +60,11 @@ docker_ready() {
   [[ -n $docker_bin ]] && "$docker_bin" info >/dev/null 2>&1
 }
 
+require_running_docker() {
+  docker_bin=$(resolve_docker_bin || true)
+  docker_ready || fail "Docker is unavailable; start it explicitly before running this command."
+}
+
 ensure_docker() {
   local attempt
   docker_bin=$(resolve_docker_bin || true)
@@ -315,7 +320,7 @@ studio_preflight() {
 }
 
 studio_observe_preflight() {
-  ensure_docker
+  require_running_docker
   load_studio_config public
   validate_studio_public_config
   studio_compose config --quiet
@@ -372,11 +377,21 @@ new_backup_name() {
   echo "telemetry-$timestamp"
 }
 
+create_studio_backup() {
+  local name=${1:-} query
+  [[ -n $name ]] || name=$(new_backup_name)
+  [[ $name =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
+    fail "Backup name may contain only letters, numbers, dots, underscores, and dashes." 2
+  query="BACKUP DATABASE otel TO Disk('telemetry_backups', '$name')"
+  # shellcheck disable=SC2016 # Variables expand inside the ClickHouse container.
+  studio_compose exec -T -e BACKUP_QUERY="$query" clickhouse \
+    sh -c 'clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --query "$BACKUP_QUERY"' || return
+  echo "$telemetry_dir/backups/$name"
+}
+
 studio_backup() {
-  local name
-  name=${2:-}
   studio_observe_preflight
-  bash "$telemetry_dir/backup.sh" "$name"
+  create_studio_backup "${2:-}"
 }
 
 studio_archive() {
@@ -389,7 +404,7 @@ studio_archive() {
   load_restic_profile "$profile"
   validate_restic_config
   backup_path="$telemetry_dir/backups/$name"
-  [[ -d $backup_path ]] || bash "$telemetry_dir/backup.sh" "$name"
+  [[ -d $backup_path ]] || create_studio_backup "$name"
   bash "$telemetry_dir/restic-backup.sh" "$name"
 }
 
@@ -404,7 +419,6 @@ restic_init() {
 }
 
 edge_preflight() {
-  ensure_docker
   load_edge_config
   validate_edge_config
   edge_compose config --quiet
@@ -412,6 +426,7 @@ edge_preflight() {
 
 edge_start() {
   local AGENT_TELEMETRY_REDACT_PATTERN=${AGENT_TELEMETRY_REDACT_PATTERN:-}
+  ensure_docker
   edge_preflight
   edge_compose pull
   edge_compose up -d
@@ -419,11 +434,13 @@ edge_start() {
 }
 
 edge_status() {
+  require_running_docker
   edge_preflight
   edge_compose ps
 }
 
 edge_logs() {
+  require_running_docker
   edge_preflight
   edge_compose logs --tail 200 collector
 }
@@ -500,13 +517,20 @@ cluster_lint() {
   helm_command lint "$telemetry_dir"
 }
 
+helm_chart_command() {
+  if [[ -n ${HNET_KUBE_SECRET:-} ]]; then
+    set -- "$@" --set-string "secret.existingName=$cluster_secret"
+  fi
+  helm_command "$@"
+}
+
 cluster_template() {
-  helm_command template "$cluster_release" "$telemetry_dir" --namespace "$cluster_namespace"
+  helm_chart_command template "$cluster_release" "$telemetry_dir" --namespace "$cluster_namespace"
 }
 
 cluster_install() {
   ensure_kubernetes true
-  helm_command upgrade --install "$cluster_release" "$telemetry_dir" \
+  helm_chart_command upgrade --install "$cluster_release" "$telemetry_dir" \
     --namespace "$cluster_namespace" --create-namespace "$@"
 }
 
