@@ -3,7 +3,7 @@
 set -euo pipefail
 umask 077
 
-script_path=${BASH_SOURCE[0]}
+script_path=${BASH_SOURCE[0]:-$0}
 script_dir=$(cd -- "${script_path%/*}" && pwd)
 repo_dir=$(cd -- "$script_dir/../.." && pwd)
 runner_root=${HNET_RUNNER_ROOT:-"$HOME/.hnet/runners"}
@@ -46,7 +46,7 @@ validate_repo() {
   local owner repo_name
   owner=${repo%%/*}
   repo_name=${repo#*/}
-  [[ -n $owner && -n $repo_name && $repo_name != */* ]] ||
+  [[ $repo == */* && -n $owner && -n $repo_name && $repo_name != */* ]] ||
     fail "Repository must use OWNER/REPO format: $repo"
   case "$owner$repo_name" in
   *[!A-Za-z0-9_.-]*) fail "Repository contains unsupported characters: $repo" ;;
@@ -91,14 +91,14 @@ run_service_command() {
 
 remove_existing_runner() {
   local runner_dir=$1
-  if [[ -x "$runner_dir/svc.sh" ]]; then
-    run_service_command "$runner_dir" stop
-    run_service_command "$runner_dir" uninstall
-  fi
   removal_token=$(gh api --method POST \
     "repos/$repo/actions/runners/remove-token" --jq '.token')
   [[ -n $removal_token && $removal_token != null ]] ||
     fail "GitHub did not return a runner removal token."
+  if [[ -x "$runner_dir/svc.sh" ]]; then
+    run_service_command "$runner_dir" stop
+    run_service_command "$runner_dir" uninstall
+  fi
   (cd "$runner_dir" && ./config.sh remove --unattended --token "$removal_token")
   rm -rf "$runner_dir"
   removal_token=
@@ -109,62 +109,70 @@ resolve_repo() {
   repo=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
 }
 
-setup_runner() {
-  local repo_key runner_dir host_name release_tag version asset_name asset_url archive
-  local staging_dir
-  repo_key=${repo//\//-}
-  runner_dir="$runner_root/$repo_key"
+prepare_runner_settings() {
+  local repo_key=$1 host_name
   host_name=$(hostname -s 2>/dev/null || hostname)
   runner_name=${runner_name:-hnet-${host_name}-${repo_key}}
   validate_runner_root
   validate_labels
   validate_runner_name
+}
 
+runner_setup_is_complete() {
+  local runner_dir=$1
+  if [[ $replace != true && (-e $runner_dir || -L $runner_dir) ]]; then
+    [[ -f "$runner_dir/.runner" ]] || fail "Runner path exists but is not configured: $runner_dir"
+    echo "Runner already configured: $runner_dir"
+    echo "Use --replace only when replacement is intentional."
+    return 0
+  fi
+  [[ $dry_run == true ]] || return 1
   if [[ -e $runner_dir || -L $runner_dir ]]; then
-    if [[ $replace != true ]]; then
-      [[ -f "$runner_dir/.runner" ]] ||
-        fail "Runner path exists but is not configured: $runner_dir"
-      echo "Runner already configured: $runner_dir"
-      echo "Use --replace only when replacement is intentional."
-      return
-    fi
-    if [[ $dry_run == true ]]; then
-      echo "Would replace runner: $runner_dir"
-      return
-    fi
-    remove_existing_runner "$runner_dir"
+    echo "Would replace runner: $runner_dir"
+    return 0
   fi
+  echo "Would register $repo as $runner_name"
+  echo "Would use labels: $labels"
+  echo "Would install under: $runner_dir"
+  echo "Would install and start the launchd service."
+}
 
-  if [[ $dry_run == true ]]; then
-    echo "Would register $repo as $runner_name"
-    echo "Would use labels: $labels"
-    echo "Would install under: $runner_dir"
-    echo "Would install and start the launchd service."
-    return
-  fi
+runner_asset_name() {
+  local version=$1
+  case "$(uname -m)" in
+  arm64) printf 'actions-runner-osx-arm64-%s.tar.gz' "$version" ;;
+  x86_64) printf 'actions-runner-osx-x64-%s.tar.gz' "$version" ;;
+  *) fail "Unsupported macOS architecture: $(uname -m)" ;;
+  esac
+}
 
+prepare_runner_archive() {
+  local release_tag version asset_name asset_url archive staging_dir
   mkdir -p "$runner_root"
   download_dir=$(mktemp -d "$runner_root/.download.XXXXXX")
   archive="$download_dir/runner.tar.gz"
   release_tag=$(gh api repos/actions/runner/releases/latest --jq '.tag_name')
   version=${release_tag#v}
-  case "$(uname -m)" in
-  arm64) asset_name="actions-runner-osx-arm64-${version}.tar.gz" ;;
-  x86_64) asset_name="actions-runner-osx-x64-${version}.tar.gz" ;;
-  *) fail "Unsupported macOS architecture: $(uname -m)" ;;
-  esac
+  asset_name=$(runner_asset_name "$version")
   asset_url="https://github.com/actions/runner/releases/download/$release_tag/$asset_name"
   curl --fail --silent --show-error --location --retry 3 \
     --output "$archive" "$asset_url"
   staging_dir="$download_dir/runner"
   mkdir -p "$staging_dir"
   tar -xzf "$archive" -C "$staging_dir"
-  mv "$staging_dir" "$runner_dir"
+  [[ -x "$staging_dir/config.sh" && -x "$staging_dir/svc.sh" ]] ||
+    fail "Runner archive is missing its setup scripts."
+}
 
+request_registration_token() {
   registration_token=$(gh api --method POST \
     "repos/$repo/actions/runners/registration-token" --jq '.token')
   [[ -n $registration_token && $registration_token != null ]] ||
     fail "GitHub did not return a runner registration token."
+}
+
+configure_runner() {
+  local runner_dir=$1
   (
     cd "$runner_dir"
     ./config.sh --unattended --url "https://github.com/$repo" \
@@ -174,6 +182,10 @@ setup_runner() {
   registration_token=
   printf '%s\n' "$repo" >"$runner_dir/.hnet-repo"
   chmod 600 "$runner_dir/.hnet-repo"
+}
+
+start_runner_service() {
+  local runner_dir=$1
   (
     cd "$runner_dir"
     ./svc.sh install
@@ -183,6 +195,22 @@ setup_runner() {
   echo "Repository: $repo"
   echo "Labels: $labels"
   echo "Directory: $runner_dir"
+}
+
+setup_runner() {
+  local repo_key runner_dir
+  repo_key=${repo//\//-}
+  runner_dir="$runner_root/$repo_key"
+  prepare_runner_settings "$repo_key"
+  runner_setup_is_complete "$runner_dir" && return
+  prepare_runner_archive
+  request_registration_token
+  if [[ -e $runner_dir || -L $runner_dir ]]; then
+    remove_existing_runner "$runner_dir"
+  fi
+  mv "$download_dir/runner" "$runner_dir"
+  configure_runner "$runner_dir"
+  start_runner_service "$runner_dir"
 }
 
 while (($# > 0)); do

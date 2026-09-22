@@ -18,6 +18,8 @@ hnet makes slow, expensive, and failing work easier to understand. A dashboard
 can show which service and model ran, how long it took, whether it succeeded,
 and how many tokens it used.
 
+Dashboard counts, trends, and recent activity use the selected time range.
+
 ```text
 service=agent  model=example  operation=tool-call
 duration=2.4s  status=success  tokens_in=820  tokens_out=146

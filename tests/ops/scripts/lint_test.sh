@@ -25,6 +25,7 @@ test_lint_wiring() {
     "$repo_dir/ops/scripts/lint.sh" --strict
   shellcheck_args=$(<"$shellcheck_log")
   assert_contains "$shellcheck_args" 'ops/scripts/lint.sh'
+  assert_contains "$shellcheck_args" 'ops/apps/hnetctl/hnetctl'
   assert_contains "$shellcheck_args" 'ops/scripts/setup.sh'
   assert_contains "$shellcheck_args" 'ops/runners/setup.sh'
   assert_contains "$shellcheck_args" 'ops/runners/setup-all.sh'
@@ -34,6 +35,7 @@ test_lint_wiring() {
   assert_contains "$shellcheck_args" 'tests/ops/runners/setup_test.sh'
   shfmt_args=$(<"$shfmt_log")
   assert_contains "$shfmt_args" 'ops/scripts/lint.sh'
+  assert_contains "$shfmt_args" 'ops/apps/hnetctl/hnetctl'
   assert_contains "$shfmt_args" 'tests/ops/scripts/lint_test.sh'
 
   (cd "$repo_dir/ops/telemetry" &&
