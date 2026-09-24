@@ -275,6 +275,7 @@ bash() {
   [[ $1 == "$telemetry_dir/restic-backup.sh" ]] || return 1
   touch "$OPS_TEST_ARCHIVE_MARKER"
 }
+telemetry_dir="$OPS_TEST_STATE_ROOT"
 case "$OPS_TEST_STATE_COMMAND" in
 backup) studio_backup backup synthetic-backup ;;
 archive) studio_archive archive synthetic-profile synthetic-archive ;;
@@ -287,6 +288,7 @@ esac'
     OPS_TEST_START_MARKER="$test_root/$1-started" \
     OPS_TEST_COMPOSE_LOG="$test_root/$1-compose.log" \
     OPS_TEST_ARCHIVE_MARKER="$test_root/$1-archived" \
+    OPS_TEST_STATE_ROOT="$test_root/$1-root" \
     bash -c "$script" "$repo_dir/ops/apps/hnetctl/hnetctl"
 }
 

@@ -5,14 +5,11 @@ set -euo pipefail
 views_file=ops/telemetry/clickhouse/dashboard-views.sql
 dashboard_file=ops/telemetry/grafana/dashboards/agent-telemetry.json
 values_file=ops/telemetry/values.yaml
+clickhouse_runner=()
 
 fail() {
   echo "$1" >&2
   exit 1
-}
-
-require_command() {
-  command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"
 }
 
 expand_grafana_macros() {
@@ -23,15 +20,42 @@ clickhouse_image() {
   awk '$1 == "clickhouse:" { print $2 }' "$values_file"
 }
 
+configure_clickhouse_runner() {
+  local image
+  if command -v clickhouse-local >/dev/null 2>&1; then
+    clickhouse_runner=(clickhouse-local)
+    return 0
+  fi
+  if command -v clickhouse >/dev/null 2>&1; then
+    clickhouse_runner=(clickhouse local)
+    return 0
+  fi
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    image=$(clickhouse_image)
+    [[ -n $image ]] || fail "ClickHouse image is missing from $values_file."
+    clickhouse_runner=(docker run --rm "$image" clickhouse-local)
+    return 0
+  fi
+  return 1
+}
+
+run_clickhouse_query_check() {
+  "${clickhouse_runner[@]}" --query "EXPLAIN SYNTAX $1" >/dev/null
+}
+
 verify_dashboard_queries_execute() {
-  local image raw_sql expanded_sql panel=0
-  require_command docker
-  image=$(clickhouse_image)
-  [[ -n $image ]] || fail "ClickHouse image is missing from $values_file."
+  local raw_sql expanded_sql panel=0
+  if ! configure_clickhouse_runner; then
+    if [[ ${HNET_REQUIRE_DASHBOARD_QUERY_EXECUTION:-0} == 1 ]]; then
+      fail "Missing clickhouse-local or a running Docker daemon for executable dashboard query checks."
+    fi
+    echo "Skipping executable dashboard query checks; install clickhouse-local or start Docker to run them." >&2
+    return
+  fi
   while IFS= read -r -d '' raw_sql; do
     panel=$((panel + 1))
     expanded_sql=$(printf '%s' "$raw_sql" | expand_grafana_macros)
-    docker run --rm "$image" clickhouse-local --query "EXPLAIN SYNTAX $expanded_sql" >/dev/null ||
+    run_clickhouse_query_check "$expanded_sql" ||
       fail "Expanded dashboard query $panel must execute in ClickHouse."
   done < <(jq -j '.panels[].targets[].rawSql + "\u0000"' "$dashboard_file")
 }
