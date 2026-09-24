@@ -34,6 +34,7 @@ shell_files=()
 while IFS= read -r shell_file; do
   shell_files+=("$shell_file")
 done < <(find ops tests -type f -name '*.sh' -print | sort)
+shell_files+=(ops/apps/hnetctl/hnetctl)
 
 [[ ${#shell_files[@]} -gt 0 ]] || fail 'No shell files found.'
 

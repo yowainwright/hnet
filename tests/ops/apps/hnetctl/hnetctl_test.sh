@@ -202,8 +202,9 @@ test_hnetctl_creates_cluster_secret_from_studio_config() {
     HNET_KUBE_RUNTIME=none \
     HNET_KUBE_NAMESPACE=telemetry-test \
     HNET_KUBE_SECRET=hnet-test-secrets \
+    OPS_TEST_HELM_LOG="$test_root/secret-helm.log" \
     OPS_TEST_KUBECTL_LOG="$kubectl_log" \
-    "$repo_dir/ops/apps/hnetctl/hnetctl" cluster-secrets
+    "$repo_dir/ops/apps/hnetctl/hnetctl" cluster-bootstrap
 
   kubectl_args=$(<"$kubectl_log")
   assert_contains "$kubectl_args" "namespace"
@@ -211,6 +212,187 @@ test_hnetctl_creates_cluster_secret_from_studio_config() {
   assert_contains "$kubectl_args" "secret"
   assert_contains "$kubectl_args" "hnet-test-secrets"
   assert_contains "$kubectl_args" "--from-env-file="
+  assert_contains "$(<"$test_root/secret-helm.log")" 'secret.existingName=hnet-test-secrets'
+}
+
+test_hnetctl_templates_custom_secret_name() {
+  local rendered
+  rendered=$(HNET_KUBE_SECRET=hnet-test-secrets "$repo_dir/ops/apps/hnetctl/hnetctl" cluster-template)
+  assert_contains "$rendered" 'name: hnet-test-secrets'
+  [[ $rendered != *'name: hnet-telemetry-secrets'* ]] || fail 'Chart ignored the custom Secret name.'
+}
+
+run_docker_observation() {
+  local script
+  # shellcheck disable=SC2016 # Variables expand in the child Bash process.
+  script=$hnetctl_source'
+start_docker_app() { touch "$OPS_TEST_START_MARKER"; exit 80; }
+"$OPS_TEST_OBSERVE_COMMAND" logs collector'
+  env PATH="$test_root/bin:$PATH" TELEMETRY_DOCKER_BIN="$test_root/bin/docker" \
+    TELEMETRY_STUDIO_ENV="$test_root/observe-studio.env" TELEMETRY_EDGE_ENV="$test_root/observe-edge.env" \
+    OPS_TEST_DOCKER_LOG="$test_root/observe-docker.log" OPS_TEST_DOCKER_INFO_EXIT_CODE="$2" \
+    OPS_TEST_CURL_LOG="$test_root/observe-curl.log" OPS_TEST_TAILSCALE_LOG="$test_root/observe-tailscale.log" \
+    OPS_TEST_START_MARKER="$test_root/unexpected-start" OPS_TEST_OBSERVE_COMMAND="$1" \
+    bash -c "$script" "$repo_dir/ops/apps/hnetctl/hnetctl"
+}
+
+test_status_and_logs_never_start_docker() {
+  local command_name result output
+  write_studio_env "$test_root/observe-studio.env"
+  write_edge_env "$test_root/observe-edge.env"
+  for command_name in studio_status studio_logs edge_status edge_logs; do
+    run_docker_observation "$command_name" 0 >/dev/null
+    : >"$test_root/observe-docker.log"
+    result=0
+    output=$(run_docker_observation "$command_name" 1 2>&1) || result=$?
+    [[ $result -eq 1 ]] || fail 'Unavailable Docker was not reported as an observation failure.'
+    assert_contains "$output" 'Docker is unavailable'
+    [[ $(<"$test_root/observe-docker.log") == info ]] || fail 'Observation continued after Docker failed.'
+    [[ ! -e $test_root/unexpected-start ]] || fail 'Observation attempted to start Docker.'
+  done
+}
+
+run_state_changing_studio_command() {
+  local script
+  # shellcheck disable=SC2016 # Variables expand in the child Bash process.
+  script=$hnetctl_source'
+docker_ready() {
+  if [[ ! -f $OPS_TEST_READY_MARKER ]]; then
+    touch "$OPS_TEST_READY_MARKER"
+    return 1
+  fi
+  return 0
+}
+start_docker_app() {
+  touch "$OPS_TEST_START_MARKER"
+}
+studio_compose() {
+  printf "%s\n" "$*" >>"$OPS_TEST_COMPOSE_LOG"
+}
+load_restic_profile() { :; }
+validate_restic_config() { :; }
+bash() {
+  [[ $1 == "$telemetry_dir/restic-backup.sh" ]] || return 1
+  touch "$OPS_TEST_ARCHIVE_MARKER"
+}
+telemetry_dir="$OPS_TEST_STATE_ROOT"
+case "$OPS_TEST_STATE_COMMAND" in
+backup) studio_backup backup synthetic-backup ;;
+archive) studio_archive archive synthetic-profile synthetic-archive ;;
+restart) studio_restart ;;
+*) exit 2 ;;
+esac'
+  env TELEMETRY_STUDIO_ENV="$test_root/state-studio.env" \
+    OPS_TEST_STATE_COMMAND="$1" \
+    OPS_TEST_READY_MARKER="$test_root/$1-ready" \
+    OPS_TEST_START_MARKER="$test_root/$1-started" \
+    OPS_TEST_COMPOSE_LOG="$test_root/$1-compose.log" \
+    OPS_TEST_ARCHIVE_MARKER="$test_root/$1-archived" \
+    OPS_TEST_STATE_ROOT="$test_root/$1-root" \
+    bash -c "$script" "$repo_dir/ops/apps/hnetctl/hnetctl"
+}
+
+test_state_changing_studio_commands_start_docker() {
+  local command_name compose_log
+  write_studio_env "$test_root/state-studio.env"
+  for command_name in backup archive restart; do
+    run_state_changing_studio_command "$command_name"
+    assert_file "$test_root/$command_name-started"
+    compose_log=$(<"$test_root/$command_name-compose.log")
+    assert_contains "$compose_log" 'config --quiet'
+  done
+  assert_contains "$(<"$test_root/backup-compose.log")" 'exec -T'
+  assert_contains "$(<"$test_root/archive-compose.log")" 'exec -T'
+  assert_contains "$(<"$test_root/restart-compose.log")" 'restart'
+}
+
+test_archive_existing_backup_does_not_start_docker() {
+  local script
+  write_studio_env "$test_root/existing-archive-studio.env"
+  mkdir -p "$test_root/existing-archive-root/backups/synthetic-existing"
+  # shellcheck disable=SC2016 # Variables expand in the child Bash process.
+  script=$hnetctl_source'
+telemetry_dir="$OPS_TEST_ARCHIVE_ROOT"
+docker_ready() { return 1; }
+start_docker_app() { touch "$OPS_TEST_START_MARKER"; }
+load_restic_profile() { :; }
+validate_restic_config() { :; }
+bash() {
+  [[ $1 == "$telemetry_dir/restic-backup.sh" ]] || return 1
+  touch "$OPS_TEST_ARCHIVE_MARKER"
+}
+studio_archive archive synthetic-profile synthetic-existing'
+  env TELEMETRY_STUDIO_ENV="$test_root/existing-archive-studio.env" \
+    OPS_TEST_ARCHIVE_ROOT="$test_root/existing-archive-root" \
+    OPS_TEST_ARCHIVE_MARKER="$test_root/existing-archived" \
+    OPS_TEST_START_MARKER="$test_root/existing-unexpected-start" \
+    bash -c "$script" "$repo_dir/ops/apps/hnetctl/hnetctl"
+  assert_file "$test_root/existing-archived"
+  [[ ! -e $test_root/existing-unexpected-start ]] || fail 'Archive started Docker for an existing backup.'
+}
+
+make_backup_fakes() {
+  mkdir -p "$test_root/backup-bin"
+  cp "$test_root/bin/docker" "$test_root/backup-bin/selected-docker"
+  cat >>"$test_root/backup-bin/selected-docker" <<'TOOL'
+case " $* " in
+  *" exec "*) exit "${OPS_TEST_BACKUP_EXIT_CODE:-0}" ;;
+esac
+TOOL
+  cat >"$test_root/backup-bin/docker" <<'TOOL'
+#!/bin/sh
+exit 74
+TOOL
+  chmod +x "$test_root/backup-bin/docker"
+  write_studio_env "$test_root/backup-studio.env"
+}
+
+run_backup_command() {
+  env PATH="$test_root/backup-bin:$PATH" \
+    TELEMETRY_STUDIO_ENV="$test_root/backup-studio.env" \
+    TELEMETRY_DOCKER_BIN="$test_root/backup-bin/selected-docker" \
+    OPS_TEST_DOCKER_LOG="$test_root/backup-docker.log" "$@"
+}
+
+test_backups_use_selected_docker() {
+  make_backup_fakes
+  run_backup_command "$repo_dir/ops/apps/hnetctl/hnetctl" backup synthetic-backup >/dev/null
+  run_backup_command "$repo_dir/ops/telemetry/backup.sh" synthetic-backup >/dev/null
+  assert_contains "$(<"$test_root/backup-docker.log")" "BACKUP DATABASE otel TO Disk('telemetry_backups', 'synthetic-backup')"
+  : >"$test_root/backup-docker.log"
+  if run_backup_command "$repo_dir/ops/apps/hnetctl/hnetctl" backup '../invalid' >/dev/null 2>&1; then
+    fail 'Invalid backup name was accepted.'
+  fi
+  [[ $(<"$test_root/backup-docker.log") != *BACKUP_QUERY* ]] || fail 'Invalid backup reached ClickHouse.'
+}
+
+run_test_archive() {
+  local script
+  # shellcheck disable=SC2016 # Variables expand in the child Bash process.
+  script=$hnetctl_source'
+telemetry_dir="$OPS_TEST_ARCHIVE_ROOT"
+load_restic_profile() { :; }
+validate_restic_config() { :; }
+bash() {
+  [[ $1 == "$telemetry_dir/restic-backup.sh" ]] || return 1
+  touch "$OPS_TEST_ARCHIVE_MARKER"
+}
+studio_archive archive synthetic-profile synthetic-archive'
+  OPS_TEST_ARCHIVE_ROOT="$test_root/archive" OPS_TEST_ARCHIVE_MARKER="$1" run_backup_command \
+    bash -c "$script" "$repo_dir/ops/apps/hnetctl/hnetctl" >/dev/null
+}
+
+test_archives_use_selected_docker() {
+  run_test_archive "$test_root/archived"
+  assert_file "$test_root/archived"
+  assert_contains "$(<"$test_root/backup-docker.log")" "BACKUP DATABASE otel TO Disk('telemetry_backups', 'synthetic-archive')"
+}
+
+test_failed_backups_stop_archiving() {
+  local result=0
+  OPS_TEST_BACKUP_EXIT_CODE=75 run_test_archive "$test_root/invalid-archive" || result=$?
+  [[ $result -eq 75 ]] || fail 'Archive did not propagate the backup failure.'
+  [[ ! -e $test_root/invalid-archive ]] || fail 'A failed backup was archived.'
 }
 
 test_hnetctl_opens_k9s_with_orbstack_context() {
@@ -358,6 +540,13 @@ test_hnetctl_validates_redaction_patterns
 test_hnetctl_preserves_personal_patterns_during_startup
 test_hnetctl_lints_telemetry_chart
 test_hnetctl_creates_cluster_secret_from_studio_config
+test_hnetctl_templates_custom_secret_name
+test_status_and_logs_never_start_docker
+test_state_changing_studio_commands_start_docker
+test_archive_existing_backup_does_not_start_docker
+test_backups_use_selected_docker
+test_archives_use_selected_docker
+test_failed_backups_stop_archiving
 test_hnetctl_opens_k9s_with_orbstack_context
 test_hnetctl_mprocs_bootstraps_compose_and_kubernetes
 test_cluster_status_never_starts_kubernetes

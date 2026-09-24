@@ -22,7 +22,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT count() AS sessions FROM otel.agent_sessions",
+          "rawSql": "SELECT uniqExact(session) AS sessions FROM otel.agent_events WHERE session != '' AND $__timeFilter(time)",
           "refId": "A"
         }
       ],
@@ -50,7 +50,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT count() AS calls FROM otel.agent_calls",
+          "rawSql": "SELECT count() AS calls FROM otel.agent_calls WHERE $__timeFilter(time)",
           "refId": "A"
         }
       ],
@@ -78,7 +78,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT uniqExact(host) AS hosts FROM otel.agent_events",
+          "rawSql": "SELECT uniqExact(host) AS hosts FROM otel.agent_events WHERE $__timeFilter(time)",
           "refId": "A"
         }
       ],
@@ -106,7 +106,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT count() AS errors FROM otel.agent_errors",
+          "rawSql": "SELECT count() AS errors FROM otel.agent_errors WHERE $__timeFilter(time)",
           "refId": "A"
         }
       ],
@@ -134,7 +134,7 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "timeSeries",
-          "rawSql": "SELECT time, client, calls FROM otel.agent_calls_5m ORDER BY time",
+          "rawSql": "SELECT toStartOfInterval(events.time, INTERVAL 5 minute) AS time, client, count() AS calls\nFROM otel.agent_calls AS events\nWHERE $__timeFilter(events.time)\nGROUP BY time, client ORDER BY time",
           "refId": "A"
         }
       ],
@@ -162,7 +162,7 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "timeSeries",
-          "rawSql": "SELECT time, client, token_type, tokens FROM otel.agent_tokens_5m ORDER BY time",
+          "rawSql": "SELECT toStartOfInterval(TimeUnix, INTERVAL 5 minute) AS time, ServiceName AS client, coalesce(nullIf(Attributes['gen_ai.token.type'], ''), nullIf(Attributes['token_type'], ''), nullIf(Attributes['type'], ''), 'total') AS token_type, sum(Sum) AS tokens\nFROM otel.otel_metrics_histogram\nWHERE positionCaseInsensitive(MetricName, 'token') > 0 AND $__timeFilter(TimeUnix)\nGROUP BY time, client, token_type ORDER BY time",
           "refId": "A"
         }
       ],
@@ -190,7 +190,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT * FROM otel.agent_sessions ORDER BY last_seen DESC LIMIT 100",
+          "rawSql": "SELECT session, any(client) AS client, any(host) AS host, min(time) AS started, max(time) AS last_seen, count() AS events\nFROM otel.agent_events\nWHERE session != '' AND $__timeFilter(time)\nGROUP BY session ORDER BY last_seen DESC LIMIT 100",
           "refId": "A"
         }
       ],
@@ -218,7 +218,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT * FROM otel.agent_inventory ORDER BY events DESC LIMIT 100",
+          "rawSql": "SELECT signal, client, event, count() AS events\nFROM otel.agent_events\nWHERE $__timeFilter(time)\nGROUP BY signal, client, event ORDER BY events DESC LIMIT 100",
           "refId": "A"
         }
       ],
@@ -246,7 +246,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT count() AS commands FROM otel.agent_shell_commands",
+          "rawSql": "SELECT count() AS commands FROM otel.agent_shell_commands WHERE $__timeFilter(time)",
           "refId": "A"
         }
       ],
@@ -274,7 +274,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT countIf(exit_code != 0) AS failures FROM otel.agent_shell_commands",
+          "rawSql": "SELECT countIf(exit_code != 0) AS failures FROM otel.agent_shell_commands WHERE $__timeFilter(time)",
           "refId": "A"
         }
       ],
@@ -302,7 +302,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT * FROM otel.agent_hosts ORDER BY last_seen DESC",
+          "rawSql": "SELECT host, max(time) AS last_seen, count() AS events\nFROM otel.agent_events\nWHERE host != '' AND $__timeFilter(time)\nGROUP BY host ORDER BY last_seen DESC",
           "refId": "A"
         }
       ],
@@ -330,7 +330,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT time, host, project, category, duration_ms, exit_code FROM otel.agent_shell_commands ORDER BY time DESC LIMIT 100",
+          "rawSql": "SELECT time, host, project, category, duration_ms, exit_code FROM otel.agent_shell_commands WHERE $__timeFilter(time) ORDER BY time DESC LIMIT 100",
           "refId": "A"
         }
       ],
@@ -358,7 +358,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT time, host, client, session, event, tool, duration_ms, success FROM otel.agent_tool_calls ORDER BY time DESC LIMIT 100",
+          "rawSql": "SELECT time, host, client, session, event, tool, duration_ms, success FROM otel.agent_tool_calls WHERE $__timeFilter(time) ORDER BY time DESC LIMIT 100",
           "refId": "A"
         }
       ],
@@ -386,7 +386,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT count() AS installs FROM otel.dotfiles_installs",
+          "rawSql": "SELECT count() AS installs FROM otel.dotfiles_installs WHERE $__timeFilter(time)",
           "refId": "A"
         }
       ],
@@ -414,7 +414,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT time, host, package_name, manager, tool, version, duration_ms, status, success FROM otel.dotfiles_installs ORDER BY time DESC LIMIT 100",
+          "rawSql": "SELECT time, host, package_name, manager, tool, version, duration_ms, status, success FROM otel.dotfiles_installs WHERE $__timeFilter(time) ORDER BY time DESC LIMIT 100",
           "refId": "A"
         }
       ],

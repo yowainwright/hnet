@@ -52,6 +52,9 @@ TOOL
   cat >"$fake_bin/docker" <<'TOOL'
 #!/bin/sh
 printf '%s\n' "$@" >> "${OPS_TEST_DOCKER_LOG:?}"
+if [ "${1:-}" = info ]; then
+  exit "${OPS_TEST_DOCKER_INFO_EXIT_CODE:-0}"
+fi
 TOOL
 
   cat >"$fake_bin/helm" <<'TOOL'
