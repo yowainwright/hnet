@@ -4,10 +4,60 @@ set -euo pipefail
 
 views_file=ops/telemetry/clickhouse/dashboard-views.sql
 dashboard_file=ops/telemetry/grafana/dashboards/agent-telemetry.json
+values_file=ops/telemetry/values.yaml
+clickhouse_runner=()
 
 fail() {
   echo "$1" >&2
   exit 1
+}
+
+expand_grafana_macros() {
+  perl -0pe 's/\$__timeFilter\(([^()]+)\)/(($1 >= toDateTime64('\''2026-01-01 00:00:00'\'', 9)) AND ($1 <= toDateTime64('\''2026-01-01 01:00:00'\'', 9)))/g'
+}
+
+clickhouse_image() {
+  awk '$1 == "clickhouse:" { print $2 }' "$values_file"
+}
+
+configure_clickhouse_runner() {
+  local image
+  if command -v clickhouse-local >/dev/null 2>&1; then
+    clickhouse_runner=(clickhouse-local)
+    return 0
+  fi
+  if command -v clickhouse >/dev/null 2>&1; then
+    clickhouse_runner=(clickhouse local)
+    return 0
+  fi
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    image=$(clickhouse_image)
+    [[ -n $image ]] || fail "ClickHouse image is missing from $values_file."
+    clickhouse_runner=(docker run --rm "$image" clickhouse-local)
+    return 0
+  fi
+  return 1
+}
+
+run_clickhouse_query_check() {
+  "${clickhouse_runner[@]}" --query "EXPLAIN SYNTAX $1" >/dev/null
+}
+
+verify_dashboard_queries_execute() {
+  local raw_sql expanded_sql panel=0
+  if ! configure_clickhouse_runner; then
+    if [[ ${HNET_REQUIRE_DASHBOARD_QUERY_EXECUTION:-0} == 1 ]]; then
+      fail "Missing clickhouse-local or a running Docker daemon for executable dashboard query checks."
+    fi
+    echo "Skipping executable dashboard query checks; install clickhouse-local or start Docker to run them." >&2
+    return
+  fi
+  while IFS= read -r -d '' raw_sql; do
+    panel=$((panel + 1))
+    expanded_sql=$(printf '%s' "$raw_sql" | expand_grafana_macros)
+    run_clickhouse_query_check "$expanded_sql" ||
+      fail "Expanded dashboard query $panel must execute in ClickHouse."
+  done < <(jq -j '.panels[].targets[].rawSql + "\u0000"' "$dashboard_file")
 }
 
 grep -Fq 'CREATE OR REPLACE VIEW otel.dotfiles_installs' "$views_file" || fail "Dotfiles install view is missing."
@@ -17,5 +67,16 @@ grep -Fq "LogAttributes['dotfiles.version'] AS version" "$views_file" || fail "D
 grep -Fq "LogAttributes['event.name'] = 'dotfiles.npm_global_install'" "$views_file" || fail "Dotfiles install event filter is missing."
 grep -Fq 'otel.dotfiles_installs' "$dashboard_file" || fail "Dotfiles dashboard query is missing."
 grep -Fq 'Recent dotfiles installs' "$dashboard_file" || fail "Dotfiles dashboard panel is missing."
+
+# Filter individual events before aggregation, including partial five-minute buckets.
+jq -e '
+  [.panels[].targets[].rawSql] | length == 15 and all(.[];
+    contains("$__timeFilter(") and
+    (test("FROM otel\\.agent_(sessions|inventory|hosts|calls_5m|tokens_5m)\\b") | not) and
+    ((contains("GROUP BY") | not) or test("WHERE[^;]*\\$__timeFilter\\([^)]*\\)[^;]*GROUP BY"))
+  )
+' "$dashboard_file" >/dev/null || fail "Dashboard queries must filter events within the selected time range."
+
+verify_dashboard_queries_execute
 
 echo "dashboard view tests passed."

@@ -113,6 +113,12 @@ The chart keeps ClickHouse, Grafana, and the OTLP gateway private as
 `ClusterIP` services. Tailscale ingress can be added when the cluster access
 path is ready; edge Macs continue using the Compose collector.
 
+<!-- Kubernetes Secret selection from ../apps/hnetctl/hnetctl -->
+
+Set `HNET_KUBE_SECRET` to use a custom Secret name consistently with
+`cluster-secrets`, `cluster-bootstrap`, `cluster-install`, and `cluster-template`.
+When unset, installation preserves the chart's `secret.existingName` setting.
+
 ## Zsh client
 
 Source the client after setting the local token and an optional safe project
@@ -134,6 +140,14 @@ Dotfiles setup events should emit OTLP to the local edge collector with the
 same bearer token. The edge collector does not ingest local log files.
 
 ## Operations
+
+<!-- status and backup behavior from ../apps/hnetctl/hnetctl and backup.sh -->
+
+Status and log commands report an unavailable runtime without starting it.
+Start Docker or Kubernetes explicitly before inspecting a stopped stack.
+Backups and archives use the same Docker executable selection as other
+`hnetctl` commands, including `TELEMETRY_DOCKER_BIN`. The standalone `backup.sh`
+delegates to `hnetctl backup`.
 
 ```bash
 ./ops/apps/hnetctl/hnetctl logs grafana
