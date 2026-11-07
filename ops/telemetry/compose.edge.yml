@@ -40,7 +40,7 @@ services:
       - "127.0.0.1:4317:4317"
       - "127.0.0.1:4318:4318"
     volumes:
-      - ./collector/edge.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - ${HNET_TELEMETRY_RESOURCES:-.}/collector/edge.yaml:/etc/otelcol-contrib/config.yaml:ro
       - collector-edge-data:/var/lib/otelcol
     tmpfs:
       - /tmp

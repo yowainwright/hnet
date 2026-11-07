@@ -1,0 +1,24 @@
+{
+  "name": "hnet",
+  "class_name": "Hnet",
+  "command": "hnetctl",
+  "repo": "yowainwright/hnet",
+  "desc": "Private agent observability for trusted Macs",
+  "homepage": "https://github.com/yowainwright/hnet",
+  "license": "MIT",
+  "version": "0.1.0",
+  "asset_prefix": "hnet",
+  "asset_template": "hnet-%{version}-%{os}-%{arch}.tar.gz",
+  "managed": false,
+  "readme": false,
+  "platforms": ["darwin"],
+  "archive": true,
+  "archive_files": ["ops", "VERSION", "LICENSE", "SHA256SUMS", "install.sh"],
+  "caveats": [
+    "Enroll explicitly after installing prerequisites and signing in:",
+    "  hnetctl client-install",
+    "Then open a new terminal and check:",
+    "  hnetctl client-check --connection",
+    "Uninstall preserves private state and does not revoke ingestion tokens."
+  ]
+}

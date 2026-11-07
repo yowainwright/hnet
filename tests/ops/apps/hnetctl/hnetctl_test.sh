@@ -532,7 +532,23 @@ validate_studio_secrets" "$repo_dir/ops/apps/hnetctl/hnetctl"; then
   fi
 }
 
+test_dashboard_refresh_reuses_the_schema_container() {
+  local script output
+  # shellcheck disable=SC2016 # Variables expand in the child Bash process.
+  script=$hnetctl_source'
+studio_observe_preflight() { :; }
+studio_compose() {
+  [[ $* == "ps --all --quiet dashboard-schema" ]] || exit 1
+  printf "0123456789abcdef"
+}
+docker_command() { printf "%s" "$*"; }
+studio_dashboard_refresh'
+  output=$(bash -c "$script" "$repo_dir/ops/apps/hnetctl/hnetctl")
+  [[ $output == 'start --attach 0123456789abcdef' ]] || fail "Refresh must reuse only the existing schema container."
+}
+
 make_fake_tools
+test_dashboard_refresh_reuses_the_schema_container
 test_hnetctl_resolves_the_ops_telemetry_path
 test_hnetctl_validates_edge_ingest_token
 test_hnetctl_loads_private_redaction_pattern

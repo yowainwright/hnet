@@ -5,6 +5,17 @@
 `hnet` is maintained from its default branch and does not publish versioned
 releases.
 
+`VERSION` currently identifies a local release candidate, not a published or
+supported release. macOS with Codex and Claude Code is the first release target.
+Kubernetes and general ChatGPT conversation tracking remain experimental or
+unverified. Publication and supported-release gates are tracked separately.
+
+The trusted-Mac model includes same-user access to ingestion credentials through
+login Keychain and inherited process environments. Per-device ingestion tokens
+do not grant dashboard, database, or vault access. Locking 1Password does not
+revoke an already enrolled token; revoke it centrally and refresh affected
+collectors, Keychain entries, shells, and agents.
+
 | Version | Supported |
 | --- | --- |
 | Default branch | Yes |

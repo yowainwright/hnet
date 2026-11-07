@@ -1,0 +1,17 @@
+install.sh
+LICENSE
+VERSION
+ops/apps/hnetctl/hnetctl
+ops/apps/hnetctl/client.sh
+ops/clients/Brewfile
+ops/clients/README.md
+ops/clients/files.txt
+ops/clients/codex/config.toml
+ops/clients/zsh/agent-telemetry.zsh
+ops/clients/zsh/auto.zsh
+ops/clients/zsh/codex.zsh
+ops/clients/zsh/claude.zsh
+ops/clients/zsh/hnetctl.zsh
+ops/telemetry/compose.edge.yml
+ops/telemetry/collector/edge.yaml
+ops/telemetry/.env.edge.example

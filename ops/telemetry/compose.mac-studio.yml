@@ -13,8 +13,8 @@ services:
     volumes:
       - clickhouse-data:/var/lib/clickhouse
       - ./backups:/var/lib/clickhouse/backups
-      - ./clickhouse/backups.xml:/etc/clickhouse-server/config.d/backups.xml:ro
-      - ./clickhouse/users.xml:/etc/clickhouse-server/users.d/telemetry.xml:ro
+      - ${HNET_TELEMETRY_RESOURCES:-.}/clickhouse/backups.xml:/etc/clickhouse-server/config.d/backups.xml:ro
+      - ${HNET_TELEMETRY_RESOURCES:-.}/clickhouse/users.xml:/etc/clickhouse-server/users.d/telemetry.xml:ro
     healthcheck:
       test:
         - CMD-SHELL
@@ -68,7 +68,7 @@ services:
       - "127.0.0.1:${GATEWAY_PORT_MAC_MINI_1:-14319}:4319"
       - "127.0.0.1:${GATEWAY_PORT_MAC_MINI_2:-14320}:4320"
     volumes:
-      - ./collector/gateway.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - ${HNET_TELEMETRY_RESOURCES:-.}/collector/gateway.yaml:/etc/otelcol-contrib/config.yaml:ro
       - collector-data:/var/lib/otelcol
     tmpfs:
       - /tmp
@@ -87,6 +87,7 @@ services:
       retries: 3
     networks:
       - telemetry
+      - egress
 
   dashboard-schema:
     image: clickhouse/clickhouse-server:26.4.4.38
@@ -103,11 +104,11 @@ services:
       - CLICKHOUSE_PASSWORD
     volumes:
       - type: bind
-        source: ./clickhouse/create-dashboard-views.sh
+        source: ${HNET_TELEMETRY_RESOURCES:-.}/clickhouse/create-dashboard-views.sh
         target: /bootstrap/create-dashboard-views.sh
         read_only: true
       - type: bind
-        source: ./clickhouse/dashboard-views.sql
+        source: ${HNET_TELEMETRY_RESOURCES:-.}/clickhouse/dashboard-views.sql
         target: /bootstrap/dashboard-views.sql
         read_only: true
     depends_on:
@@ -139,8 +140,8 @@ services:
       - "127.0.0.1:${GRAFANA_PORT:-2021}:3000"
     volumes:
       - grafana-data:/var/lib/grafana
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ${HNET_TELEMETRY_RESOURCES:-.}/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ${HNET_TELEMETRY_RESOURCES:-.}/grafana/dashboards:/var/lib/grafana/dashboards:ro
     tmpfs:
       - /tmp
     depends_on:

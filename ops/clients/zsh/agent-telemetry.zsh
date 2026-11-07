@@ -44,8 +44,10 @@ _agent_telemetry_preexec() {
 
 _agent_telemetry_record() {
   local duration_ms=$1 exit_code=$2
-  printf '{"attributes":[{"key":"event.name","value":{"stringValue":"shell.command"}},{"key":"shell.command.category","value":{"stringValue":"%s"}},{"key":"shell.duration_ms","value":{"intValue":"%d"}},{"key":"shell.exit_code","value":{"intValue":"%d"}},{"key":"shell.project","value":{"stringValue":"%s"}}],"body":{"stringValue":""}}' \
-    "$_AGENT_TELEMETRY_CATEGORY" "$duration_ms" "$exit_code" "$_AGENT_TELEMETRY_PROJECT"
+  local timestamp_ns
+  printf -v timestamp_ns '%.0f' "$(( EPOCHREALTIME * 1000000000 ))"
+  printf '{"timeUnixNano":"%s","attributes":[{"key":"event.name","value":{"stringValue":"shell.command"}},{"key":"shell.command.category","value":{"stringValue":"%s"}},{"key":"shell.duration_ms","value":{"intValue":"%d"}},{"key":"shell.exit_code","value":{"intValue":"%d"}},{"key":"shell.project","value":{"stringValue":"%s"}}],"body":{"stringValue":""}}' \
+    "$timestamp_ns" "$_AGENT_TELEMETRY_CATEGORY" "$duration_ms" "$exit_code" "$_AGENT_TELEMETRY_PROJECT"
 }
 
 _agent_telemetry_send() {
