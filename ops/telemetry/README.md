@@ -488,8 +488,18 @@ Selection uses wall-clock snapshot age and the `agent-telemetry` tag, including
 an old newest snapshot when backups have stopped. After reviewing a dry run and
 verifying a restore, an operator can explicitly run `retention nas --apply` to
 forget selected snapshots, prune unreferenced data, and check the repository.
-No maintenance schedule is enabled automatically. Local ClickHouse backup
-staging is preserved and needs a separate reviewed cleanup policy. Snapshot
+No maintenance schedule is enabled automatically.
+
+Dry runs list the selected snapshot IDs before any deletion. Failures report
+the Restic exit code and a category (such as repository lock, authentication,
+connectivity, or integrity). Sanitized diagnostics are stored with private file
+permissions under `${HNET_CLIENT_HOME:-$HOME/.local/share/hnet}/logs/retention`.
+They contain only operation, exit code, and category; raw Restic output is not
+retained because it can include private repository details. See the
+[Restic exit-code reference](https://restic.readthedocs.io/en/stable/075_scripting.html#exit-codes).
+
+Local ClickHouse backup staging is preserved and needs a separate reviewed
+cleanup policy. Snapshot
 age does not bound the age of contained telemetry, and physical deletion depends
 on pruning and other snapshots that reference the same data.
 

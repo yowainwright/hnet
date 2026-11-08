@@ -149,6 +149,11 @@ start anything and do not resolve the ingestion token. `--connection` reads
 the existing Keychain token and checks both collector endpoints without
 creating usage records.
 
+After archive enrollment, `./install.sh --check` forwards to the managed
+installation. For a custom install location, set `HNET_CLIENT_HOME` to that
+location when checking. `--prerequisites` always checks the current machine
+without requiring an enrollment.
+
 For a preconfigured deployment, put the four keys from
 `ops/telemetry/.env.edge.example` into a private file and run:
 
@@ -174,6 +179,7 @@ From the working hnet repository:
 The archive and checksum are written to `dist/`. They use the current files,
 so committing or publishing is not needed to test a second Mac. The archive
 includes `SHA256SUMS`; setup checks it before installation.
+`HNET_CLIENT_BUNDLE_DIR` can select an absolute or relative output directory.
 
 Dependency installation uses [Homebrew Bundle](https://docs.brew.sh/Brew-Bundle-and-Brewfile)
 and the small client Brewfile. The required tools are [OrbStack](https://orbstack.dev/download)
