@@ -12,15 +12,16 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      MISE_DATA_DIR: ${{ runner.temp }}/hnet-mise-${{ github.run_id }}-${{ github.run_attempt }}
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Isolate project tool data
+        shell: bash
+        run: printf 'MISE_DATA_DIR=%s/hnet-mise-%s-%s\n' "$RUNNER_TEMP" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
 
       - name: Install project tools
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
@@ -66,13 +67,14 @@ jobs:
   macos-client:
     runs-on: macos-latest
     timeout-minutes: 15
-    env:
-      MISE_DATA_DIR: ${{ runner.temp }}/hnet-mise-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+      - name: Isolate project tool data
+        shell: bash
+        run: printf 'MISE_DATA_DIR=%s/hnet-mise-%s-%s\n' "$RUNNER_TEMP" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
       - name: Install project tools
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
         with:
