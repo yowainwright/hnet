@@ -11,6 +11,7 @@ datasources:
       host: clickhouse
       port: 9000
       protocol: native
+      queryTimeout: 30
       defaultDatabase: otel
       username: grafana_reader
       tlsSkipVerify: false

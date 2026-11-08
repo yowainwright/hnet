@@ -1,11 +1,24 @@
 <clickhouse>
+  <profiles>
+    <grafana_readonly>
+      <readonly>1</readonly>
+      <max_execution_time>60</max_execution_time>
+      <constraints>
+        <max_execution_time>
+          <min>1</min>
+          <max>60</max>
+          <changeable_in_readonly />
+        </max_execution_time>
+      </constraints>
+    </grafana_readonly>
+  </profiles>
   <users>
     <grafana_reader>
       <password from_env="GRAFANA_CLICKHOUSE_PASSWORD" />
       <networks>
         <ip>::/0</ip>
       </networks>
-      <profile>readonly</profile>
+      <profile>grafana_readonly</profile>
       <quota>default</quota>
       <grants>
         <query>GRANT SELECT ON otel.*</query>

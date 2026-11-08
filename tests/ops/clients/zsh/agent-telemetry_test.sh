@@ -8,6 +8,17 @@ script_dir=$(cd -- "$script_parent" && pwd)
 # shellcheck source=tests/ops/test_support.sh
 source "$script_dir/../../test_support.sh"
 
+test_zsh_records_have_current_timestamps() {
+  zsh -f -c '
+    source "$1"
+    _agent_telemetry_preexec git
+    _agent_telemetry_record 12 0
+  ' zsh "$repo_dir/ops/clients/zsh/agent-telemetry.zsh" |
+    jq -e '.timeUnixNano | select(type == "string") |
+      select(test("^[0-9]+$")) | (tonumber / 1000000000) as $timestamp |
+      $timestamp > now - 10 and $timestamp <= now + 1' >/dev/null
+}
+
 test_zsh_client_sends_authenticated_otlp() {
   local fake_bin="$test_root/bin/zsh-client"
   local args_log="$test_root/curl-args.log"
@@ -153,6 +164,7 @@ ZSH
 
 trap 'echo "Zsh telemetry test failed at line $LINENO." >&2' ERR
 make_fake_tools
+test_zsh_records_have_current_timestamps
 test_zsh_client_sends_authenticated_otlp
 test_zsh_sender_is_bounded_and_does_not_block
 test_zsh_drains_pending_events_while_idle

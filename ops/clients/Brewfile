@@ -1,0 +1,5 @@
+cask "orbstack" unless File.directory?("/Applications/OrbStack.app") || File.directory?("/Applications/Docker.app")
+cask "tailscale-app" unless File.directory?("/Applications/Tailscale.app")
+cask "1password" unless File.directory?("/Applications/1Password.app")
+cask "1password-cli" unless system("which", "op", out: File::NULL, err: File::NULL)
+cask "codex" unless system("which", "codex", out: File::NULL, err: File::NULL)

@@ -13,4 +13,6 @@ ops/telemetry/queues/
 node_modules/
 dist/
 coverage/
+reports/
+research_notes/
 *.log

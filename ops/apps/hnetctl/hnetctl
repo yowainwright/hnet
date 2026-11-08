@@ -7,6 +7,12 @@ script_parent=${script_path%/*}
 app_dir=$(cd -- "$script_parent" && pwd)
 ops_dir=$(cd -- "$app_dir/../.." && pwd)
 telemetry_dir="$ops_dir/telemetry"
+telemetry_resources="$telemetry_dir"
+if [[ -n ${HNET_PACKAGE_ROOT:-} ]]; then
+  telemetry_dir="${HNET_CLIENT_HOME:-$HOME/.local/share/hnet}/ops/telemetry"
+  HNET_SHELL_STARTUP_CLIENT="${HNET_CLIENT_HOME:-$HOME/.local/share/hnet}/ops/clients/zsh/auto.zsh"
+  export HNET_TELEMETRY_RESOURCES="$telemetry_resources"
+fi
 studio_env=${TELEMETRY_STUDIO_ENV:-}
 edge_env=${TELEMETRY_EDGE_ENV:-}
 docker_bin=${TELEMETRY_DOCKER_BIN:-}
@@ -252,11 +258,15 @@ load_edge_config() {
 
 validate_edge_config() {
   validate_redaction_pattern
+  validate_edge_destination
+  validate_token AGENT_TELEMETRY_INGEST_TOKEN "${AGENT_TELEMETRY_INGEST_TOKEN:-}"
+}
+
+validate_edge_destination() {
   local upstream_pattern='^https://[A-Za-z0-9][A-Za-z0-9.-]*\.ts\.net:(4318|4319|4320)$'
   local label_pattern='^[A-Za-z0-9][A-Za-z0-9._-]*$'
   [[ ${AGENT_TELEMETRY_UPSTREAM:-} =~ $upstream_pattern ]] || fail "Edge upstream must be a Studio Tailscale HTTPS endpoint on port 4318, 4319, or 4320."
   [[ ${AGENT_TELEMETRY_HOST:-} =~ $label_pattern ]] || fail "Edge host must be a safe label."
-  validate_token AGENT_TELEMETRY_INGEST_TOKEN "${AGENT_TELEMETRY_INGEST_TOKEN:-}"
 }
 
 load_restic_profile() {
@@ -270,6 +280,10 @@ load_restic_profile() {
       value=$(resolved_config_value "$key" "$value")
       printf -v "$key" '%s' "$value"
       export "${key?}"
+      ;;
+    BACKUP_RETENTION_DAYS)
+      [[ $value =~ ^[1-9][0-9]{0,4}$ && $value -le 36500 ]] || fail "BACKUP_RETENTION_DAYS must be 1..36500."
+      export BACKUP_RETENTION_DAYS=$value
       ;;
     '' | '#'*) ;;
     *) fail "Unsupported key in restic profile: $key" ;;
@@ -286,14 +300,14 @@ studio_compose() {
   local pattern
   pattern=$(collector_redaction_pattern)
   AGENT_TELEMETRY_REDACT_PATTERN=$pattern docker_command compose --env-file "$studio_env" --project-directory "$telemetry_dir" \
-    -f "$telemetry_dir/compose.mac-studio.yml" "$@"
+    -f "${HNET_TELEMETRY_RESOURCES:-$telemetry_dir}/compose.mac-studio.yml" "$@"
 }
 
 edge_compose() {
   local pattern
   pattern=$(collector_redaction_pattern)
   AGENT_TELEMETRY_REDACT_PATTERN=$pattern docker_command compose --env-file "$edge_env" --project-directory "$telemetry_dir" \
-    -f "$telemetry_dir/compose.edge.yml" "$@"
+    -f "${HNET_TELEMETRY_RESOURCES:-$telemetry_dir}/compose.edge.yml" "$@"
 }
 
 grafana_health_url() {
@@ -379,6 +393,14 @@ studio_logs() {
   studio_compose logs --tail 200 "$service"
 }
 
+studio_dashboard_refresh() {
+  local container
+  studio_observe_preflight
+  container=$(studio_compose ps --all --quiet dashboard-schema)
+  [[ $container =~ ^[0-9a-f]{12,64}$ ]] || fail "Expected one existing dashboard-schema container."
+  docker_command start --attach "$container"
+}
+
 new_backup_name() {
   local timestamp
   timestamp=$(date -u +%Y%m%dT%H%M%SZ)
@@ -415,7 +437,16 @@ studio_archive() {
     studio_runtime_preflight
     create_studio_backup "$name"
   fi
-  bash "$telemetry_dir/restic-backup.sh" "$name"
+  HNET_BACKUP_DIR="$telemetry_dir/backups" bash "${HNET_TELEMETRY_RESOURCES:-$telemetry_dir}/restic-backup.sh" "$name"
+}
+
+studio_retention() {
+  local profile=${2:-} mode=${3:---dry-run}
+  [[ $# -le 3 && -n $profile ]] || fail "Usage: hnetctl retention PROFILE [--dry-run|--apply]"
+  [[ $mode == --dry-run || $mode == --apply ]] || fail "Use --dry-run or --apply."
+  load_restic_profile "$profile"
+  validate_restic_config
+  bash "${HNET_TELEMETRY_RESOURCES:-$telemetry_dir}/retention.sh" "$mode"
 }
 
 studio_restart() {
@@ -458,6 +489,202 @@ edge_logs() {
   require_running_docker
   edge_preflight
   edge_compose logs --tail 200 collector
+}
+
+shell_security() {
+  "${HNET_SECURITY_BIN:-/usr/bin/security}" "$@"
+}
+
+shell_keychain() {
+  printf '%s' "${HNET_SHELL_KEYCHAIN:-$HOME/Library/Keychains/login.keychain-db}"
+}
+
+shell_keychain_quoted() {
+  local keychain
+  keychain=$(shell_keychain)
+  [[ $keychain != *$'\n'* ]] || fail "Unsupported login Keychain location."
+  [[ $keychain != *$'\r'* ]] || fail "Unsupported login Keychain location."
+  keychain=${keychain//\\/\\\\}
+  printf '%s' "${keychain//\"/\\\"}"
+}
+
+shell_store_token() {
+  local keychain quoted_keychain stored_token
+  keychain=$(shell_keychain)
+  quoted_keychain=$(shell_keychain_quoted)
+  [[ -f $keychain ]] || fail "Login Keychain is unavailable."
+  printf 'add-generic-password -U -a local -s hnet.zsh.ingest -T /usr/bin/security -w %s "%s"\n' \
+    "$AGENT_TELEMETRY_INGEST_TOKEN" "$quoted_keychain" |
+    shell_security -i >/dev/null 2>&1 || fail "Could not store the shell token in login Keychain."
+  stored_token=$(shell_security find-generic-password -a local -s hnet.zsh.ingest \
+    -w "$keychain" 2>/dev/null) || fail "Could not verify the shell token in login Keychain."
+  [[ $stored_token == "$AGENT_TELEMETRY_INGEST_TOKEN" ]] || fail "Login Keychain token verification failed."
+}
+
+shell_startup_entry() {
+  local client=${HNET_SHELL_STARTUP_CLIENT:-"$ops_dir/clients/zsh/auto.zsh"}
+  printf 'if [[ -r %q ]]; then source %q; fi' "$client" "$client"
+}
+
+shell_startup_preflight() {
+  local startup="${ZDOTDIR:-$HOME}/.zshrc" entry
+  [[ ! -L $startup ]] || fail "Shell startup is a symlink; add the documented hnet source entry manually."
+  [[ ! -e $startup || -f $startup ]] || fail "Shell startup is not a regular file."
+  [[ -f $startup ]] || return 0
+  grep -Fq '# >>> hnet zsh >>>' "$startup" || return 0
+  entry=$(shell_startup_entry)
+  grep -Fxq "$entry" "$startup" || fail "Existing hnet startup points elsewhere; remove its marked block first."
+}
+
+shell_install_startup() {
+  local startup="${ZDOTDIR:-$HOME}/.zshrc" entry
+  entry=$(shell_startup_entry)
+  if [[ -f $startup ]]; then
+    grep -Fxq "$entry" "$startup" && return
+  fi
+  mkdir -p "${startup%/*}"
+  printf '\n# >>> hnet zsh >>>\n%s\n# <<< hnet zsh <<<\n' "$entry" >>"$startup"
+}
+
+shell_enable() {
+  set +x
+  [[ $(uname -s) == Darwin ]] || fail "Automatic shell setup requires macOS login Keychain."
+  shell_startup_preflight
+  load_edge_config
+  validate_edge_config
+  shell_store_token
+  shell_install_startup
+  echo "Shell token verified in login Keychain; automatic startup enabled."
+  echo "Open a new terminal to begin collecting shell metadata."
+}
+
+shell_status() {
+  local startup="${ZDOTDIR:-$HOME}/.zshrc" entry keychain
+  keychain=$(shell_keychain)
+  shell_security find-generic-password -a local -s hnet.zsh.ingest \
+    "$keychain" >/dev/null 2>&1 || fail "Shell token is missing from login Keychain."
+  entry=$(shell_startup_entry)
+  [[ -f $startup ]] || fail "Automatic shell startup is not installed."
+  grep -Fxq "$entry" "$startup" || fail "Automatic shell startup is not installed for this checkout."
+  echo "Login Keychain token present; automatic shell startup installed."
+}
+
+codex_config_file() {
+  printf '%s' "${HNET_CODEX_CONFIG:-${CODEX_HOME:-$HOME/.codex}/config.toml}"
+}
+
+codex_validate_config() {
+  command codex app-server --print-startup-config --strict-config >/dev/null 2>&1 ||
+    fail "Codex rejected its configuration; inspect the marked hnet block locally."
+}
+
+codex_require_local_config() {
+  local config block expected
+  config=$(codex_config_file)
+  [[ -f $config ]] || fail "Enable Codex telemetry with hnetctl codex-enable first."
+  block=$(sed -n '/^# >>> hnet codex >>>$/,/^# <<< hnet codex <<<$/p' "$config" | sed '1d;$d')
+  expected=$(<"$ops_dir/clients/codex/config.toml")
+  [[ $block == "$expected" ]] || fail "Codex hnet exporter settings differ from the local template."
+}
+
+codex_install_config() {
+  local config=${1:?}
+  [[ ! -L $config ]] || fail "Codex configuration is a symlink; integrate the hnet template manually."
+  if [[ -f $config ]]; then
+    if grep -Fxq '# >>> hnet codex >>>' "$config"; then
+      codex_require_local_config
+      return
+    fi
+    if grep -Eq '^[[:space:]]*(\[[^]]*otel|otel[.[:space:]]*=)' "$config"; then
+      fail "Existing Codex telemetry needs a manual merge with the hnet template."
+    fi
+  fi
+  codex_append_config "$config"
+}
+
+codex_append_config() {
+  local config=${1:?}
+  mkdir -p "${config%/*}"
+  {
+    printf '\n# >>> hnet codex >>>\n'
+    cat "$ops_dir/clients/codex/config.toml"
+    printf '# <<< hnet codex <<<\n'
+  } >>"$config"
+}
+
+codex_enable() {
+  local config
+  config=$(codex_config_file)
+  require_command codex
+  shell_status
+  codex_validate_config
+  codex_install_config "$config"
+  codex_validate_config
+  echo "Codex local telemetry configured; open a new terminal to load its launchers."
+}
+
+codex_auth_environment() {
+  codex_require_local_config
+  agent_auth_environment
+}
+
+agent_auth_environment() {
+  local token keychain header_name
+  keychain=$(shell_keychain)
+  token=$(shell_security find-generic-password -a local -s hnet.zsh.ingest \
+    -w "$keychain" 2>/dev/null) || fail "Unlock login Keychain before launching an agent with hnet."
+  validate_token 'Keychain ingestion token' "$token"
+  for header_name in OTEL_EXPORTER_OTLP_HEADERS OTEL_EXPORTER_OTLP_LOGS_HEADERS \
+    OTEL_EXPORTER_OTLP_TRACES_HEADERS OTEL_EXPORTER_OTLP_METRICS_HEADERS; do
+    printf -v "$header_name" 'Authorization=Bearer %s' "$token"
+    export "${header_name?}"
+  done
+  export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+  export OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://127.0.0.1:4318/v1/logs
+  export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces
+  export OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://127.0.0.1:4318/v1/metrics
+}
+
+codex_launch() {
+  set +x
+  codex_auth_environment
+  command codex "$@"
+}
+
+codex_app_launch() {
+  local app=ChatGPT
+  [[ ! -d /Applications/Codex.app ]] || app=Codex
+  desktop_agent_launch "$app"
+}
+
+desktop_agent_launch() {
+  set +x
+  local app=${1:?}
+  desktop_require_stopped "$app"
+  codex_auth_environment
+  open -a "$app"
+}
+
+desktop_require_stopped() {
+  local app=${1:?} status=0
+  require_command pgrep
+  pgrep -x "$app" >/dev/null || status=$?
+  [[ $status == 1 ]] && return 0
+  [[ $status == 0 ]] || fail "Could not check whether $app is running."
+  fail "$app is already running. Quit it completely, then run this launcher again."
+}
+
+claude_launch() {
+  set +x
+  require_command claude
+  agent_auth_environment
+  export CLAUDE_CODE_ENABLE_TELEMETRY=1 OTEL_METRICS_EXPORTER=otlp OTEL_LOGS_EXPORTER=otlp
+  export OTEL_TRACES_EXPORTER=none OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+  export OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=http/protobuf
+  unset OTEL_LOG_USER_PROMPTS OTEL_LOG_ASSISTANT_RESPONSES OTEL_LOG_TOOL_DETAILS OTEL_LOG_TOOL_CONTENT
+  unset OTEL_LOG_RAW_API_BODIES OTEL_LOG_SYSTEM_PROMPTS OTEL_LOG_MANAGED_SETTINGS BETA_TRACING_ENDPOINT
+  unset CLAUDE_CODE_ENHANCED_TELEMETRY_BETA ENABLE_ENHANCED_TELEMETRY_BETA
+  command claude "$@"
 }
 
 helm_command() {
@@ -635,21 +862,67 @@ operator_mprocs() {
     --log-dir "$mprocs_log_dir" --log-mode append
 }
 
+client_command() {
+  local operation=${1:?}
+  shift
+  # shellcheck source=ops/apps/hnetctl/client.sh
+  source "$app_dir/client.sh"
+  "$operation" "$@"
+}
+
 usage() {
   echo "Usage: hnetctl COMMAND"
   echo "Studio: bootstrap, start, serve, status, doctor, restart"
+  echo "Dashboard: dashboard-refresh"
   echo "Data: logs SERVICE, backup [NAME], archive PROFILE [NAME]"
-  echo "Backup setup: restic-init PROFILE"
+  echo "Backup setup: restic-init PROFILE; retention PROFILE [--dry-run|--apply]"
   echo "Edge: edge-start, edge-status, edge-logs"
+  echo "Shell: shell-enable, shell-status"
+  echo "Agents: codex-enable, codex [ARGS], codex-app, chatgpt-app, claude [ARGS]"
+  echo "Client: client-install, client-check, client-bundle, release-bundle, --version"
   echo "Cluster: cluster-lint, cluster-template, cluster-secrets, cluster-install, cluster-bootstrap, cluster-status, k9s [RESOURCE]"
   echo "Operator: up, mprocs"
 }
 
+if [[ -n ${HNET_PACKAGE_ROOT:-} ]]; then
+  case "${1:-}" in
+  cluster-* | k9s | up | mprocs)
+    fail "Use a source checkout for experimental Kubernetes/operator commands; the package supports Compose."
+    ;;
+  esac
+fi
+
 case "${1:-}" in
+--version)
+  [[ $# == 1 ]] || fail "Usage: hnetctl --version"
+  printf 'hnetctl %s\n' "$(<"$ops_dir/../VERSION")"
+  ;;
+release-bundle)
+  shift
+  [[ -r "$app_dir/release.sh" ]] || fail "Build full release previews from a source checkout."
+  # shellcheck source=ops/apps/hnetctl/client.sh
+  source "$app_dir/client.sh"
+  # shellcheck source=ops/apps/hnetctl/release.sh
+  source "$app_dir/release.sh"
+  release_bundle "$@"
+  ;;
+client-install)
+  shift
+  client_command client_install "$@"
+  ;;
+client-check)
+  shift
+  client_command client_check "$@"
+  ;;
+client-bundle)
+  shift
+  client_command client_bundle "$@"
+  ;;
 bootstrap) bootstrap ;;
 start) studio_start ;;
 serve) studio_serve ;;
 status | doctor) studio_status ;;
+dashboard-refresh) studio_dashboard_refresh ;;
 logs) studio_logs "$@" ;;
 restart)
   studio_restart
@@ -657,9 +930,23 @@ restart)
 backup) studio_backup "$@" ;;
 archive) studio_archive "$@" ;;
 restic-init) restic_init "$@" ;;
+retention) studio_retention "$@" ;;
 edge-start) edge_start ;;
 edge-status) edge_status ;;
 edge-logs) edge_logs ;;
+shell-enable) shell_enable ;;
+shell-status) shell_status ;;
+codex-enable) codex_enable ;;
+codex)
+  shift
+  codex_launch "$@"
+  ;;
+codex-app) codex_app_launch ;;
+chatgpt-app) desktop_agent_launch ChatGPT ;;
+claude)
+  shift
+  claude_launch "$@"
+  ;;
 cluster-lint) cluster_lint ;;
 cluster-template) cluster_template ;;
 cluster-secrets) cluster_secrets ;;
