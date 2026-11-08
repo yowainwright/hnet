@@ -8,6 +8,7 @@ source "${BASH_SOURCE[0]%/*}/../test_support.sh"
 main() {
   configure_fixture
   test_bundle_is_portable_and_excludes_private_state
+  test_relative_bundle_directory
   test_missing_prerequisites_stop_before_installation
   test_remote_docker_is_refused
   test_upstream_rejection_stops_before_installation
@@ -15,6 +16,7 @@ main() {
   test_clean_install_and_repeat
   test_installed_shell_has_hnetctl
   test_doctor_is_read_only_and_checks_connections
+  test_archive_checks_installed_enrollment
   test_package_enrollment_uses_stable_resources
   test_explicit_dependency_install
   test_conflicting_codex_telemetry_is_preserved
@@ -79,6 +81,23 @@ test_bundle_is_portable_and_excludes_private_state() {
   client_package="$test_root/unpacked/hnet-client"
   (cd "$client_package" && shasum -a 256 -c SHA256SUMS >/dev/null)
   [[ ! -e "$client_package/.git" ]] || fail "Portable install depends on Git metadata."
+}
+
+test_relative_bundle_directory() {
+  local process watchdog result=0
+  (cd "$test_root" && exec bash -c 'source "$1"; client_reject_symlinks relative-dist' hnet-test "$repo_dir/ops/apps/hnetctl/client.sh") &
+  process=$!
+  (
+    sleep 5
+    kill "$process" 2>/dev/null || true
+  ) &
+  watchdog=$!
+  wait "$process" || result=$?
+  kill "$watchdog" 2>/dev/null || true
+  wait "$watchdog" 2>/dev/null || true
+  [[ $result == 0 ]] || fail "Relative bundle output failed or hung."
+  (cd "$test_root" && HNET_CLIENT_BUNDLE_DIR=relative-dist "$repo_dir/ops/apps/hnetctl/hnetctl" client-bundle)
+  [[ -f "$test_root/relative-dist/hnet-client-macos.tar.gz" ]] || fail "Relative bundle output is missing."
 }
 
 test_missing_prerequisites_stop_before_installation() {
@@ -147,6 +166,13 @@ test_doctor_is_read_only_and_checks_connections() {
 
 test_installed_shell_has_hnetctl() {
   zsh -fi -c 'source "$ZDOTDIR/.zshrc"; hnetctl client-check --prerequisites'
+}
+
+test_archive_checks_installed_enrollment() {
+  HNET_CLIENT_HOME="$client_prefix" "$client_package/install.sh" --check
+  HNET_CLIENT_HOME="$client_prefix" "$client_package/install.sh" --check --connection
+  [[ ! -e "$client_package/ops/telemetry/.env.edge" ]] || fail "Archive checker created private configuration."
+  assert_no_secret_leaks
 }
 
 test_package_enrollment_uses_stable_resources() {

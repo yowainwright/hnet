@@ -38,6 +38,7 @@ client_check() {
     return
   }
   client_verify_source "$client_source"
+  client_check_installed_archive "$@"
   client_check_prerequisites
   if [[ $client_prerequisites_only == false ]]; then
     client_check_enrollment
@@ -54,6 +55,7 @@ client_bundle() (
   local bundle_dir client_stage
   bundle_dir=$(client_bundle_directory)
   mkdir -p "$bundle_dir"
+  bundle_dir=$(cd -- "$bundle_dir" && pwd)
   client_stage=$(mktemp -d "$bundle_dir/.hnet-client.XXXXXX")
   trap 'rm -rf -- "$client_stage"' EXIT
   client_copy_files "$client_source" "$client_stage/hnet-client"
@@ -67,6 +69,20 @@ client_bundle_directory() {
   local output="$client_source/dist"
   [[ -z ${HNET_PACKAGE_ROOT:-} ]] || output="$client_prefix/dist"
   printf '%s' "${HNET_CLIENT_BUNDLE_DIR:-$output}"
+}
+
+client_check_installed_archive() {
+  [[ $client_prerequisites_only == false ]] || return 0
+  [[ -z ${HNET_PACKAGE_ROOT:-} ]] || return 0
+  [[ ! -e "$client_source/.git" ]] || return 0
+  [[ $client_source != "$client_prefix" ]] || return 0
+  client_reject_symlinks "$client_prefix/.hnet-client"
+  [[ -f "$client_prefix/.hnet-client" ]] || return 0
+  client_require_managed_prefix
+  local installed="$client_prefix/ops/apps/hnetctl/hnetctl"
+  client_reject_symlinks "$installed"
+  [[ -x $installed ]] || fail "Use the installed package's hnetctl to check this enrollment."
+  HNET_CLIENT_HOME="$client_prefix" exec "$installed" client-check "$@"
 }
 
 client_initialize() {
@@ -502,6 +518,7 @@ client_reject_symlinks() {
   while :; do
     case "$target" in / | . | '') return 0 ;; esac
     [[ ! -L $target ]] || fail "Client installation cannot traverse symlinks."
+    [[ $target == */* ]] || return 0
     target=${target%/*}
     [[ -n $target ]] || return 0
   done
