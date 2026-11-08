@@ -17,6 +17,7 @@ main() {
   test_installed_shell_has_hnetctl
   test_doctor_is_read_only_and_checks_connections
   test_archive_checks_installed_enrollment
+  test_installed_checks_accept_path_aliases
   test_package_enrollment_uses_stable_resources
   test_explicit_dependency_install
   test_conflicting_codex_telemetry_is_preserved
@@ -84,18 +85,8 @@ test_bundle_is_portable_and_excludes_private_state() {
 }
 
 test_relative_bundle_directory() {
-  local process watchdog result=0
   (cd "$test_root" && exec bash -c 'source "$1"; client_reject_symlinks relative-dist' hnet-test "$repo_dir/ops/apps/hnetctl/client.sh") &
-  process=$!
-  (
-    sleep 5
-    kill "$process" 2>/dev/null || true
-  ) &
-  watchdog=$!
-  wait "$process" || result=$?
-  kill "$watchdog" 2>/dev/null || true
-  wait "$watchdog" 2>/dev/null || true
-  [[ $result == 0 ]] || fail "Relative bundle output failed or hung."
+  wait_for_test_command "$!"
   (cd "$test_root" && HNET_CLIENT_BUNDLE_DIR=relative-dist "$repo_dir/ops/apps/hnetctl/hnetctl" client-bundle)
   [[ -f "$test_root/relative-dist/hnet-client-macos.tar.gz" ]] || fail "Relative bundle output is missing."
 }
@@ -175,6 +166,13 @@ test_archive_checks_installed_enrollment() {
   assert_no_secret_leaks
 }
 
+test_installed_checks_accept_path_aliases() {
+  HNET_CLIENT_HOME="$client_prefix/" "$client_prefix/ops/apps/hnetctl/hnetctl" client-check &
+  wait_for_test_command "$!"
+  HNET_CLIENT_HOME="$client_prefix/./" "$client_package/install.sh" --check &
+  wait_for_test_command "$!"
+}
+
 test_package_enrollment_uses_stable_resources() {
   local root="$test_root/brew" prefix entry
   HNET_RELEASE_DIR="$root/dist" "$repo_dir/ops/apps/hnetctl/hnetctl" release-bundle
@@ -230,6 +228,19 @@ test_checksum_failure_stops_installation() {
   fi
   [[ ! -e "$test_root/tampered" ]] || fail "Tampered source changed the destination."
 }
+wait_for_test_command() {
+  local process=${1:?} watchdog result=0
+  (
+    sleep 10
+    kill "$process" 2>/dev/null || true
+  ) &
+  watchdog=$!
+  wait "$process" || result=$?
+  kill "$watchdog" 2>/dev/null || true
+  wait "$watchdog" 2>/dev/null || true
+  [[ $result == 0 ]] || fail "Client command failed or hung."
+}
+
 assert_no_secret_leaks() {
   grep -Fqf "$HNET_TEST_TOKEN_FILE" "$ZDOTDIR/.zshrc" "$HNET_CODEX_CONFIG" \
     "$HNET_TEST_TOOL_LOG" "$HNET_TEST_ARGS" "$client_prefix/ops/telemetry/.env.edge" || return 0
