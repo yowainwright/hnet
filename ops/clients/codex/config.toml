@@ -1,0 +1,20 @@
+[otel]
+environment = "personal"
+log_user_prompt = false
+log_agent_responses = false
+log_guardian_assessments = false
+
+[otel.tool_result]
+max_bytes = 0
+
+[otel.exporter.otlp-http]
+endpoint = "http://127.0.0.1:4318/v1/logs"
+protocol = "binary"
+
+[otel.trace_exporter.otlp-http]
+endpoint = "http://127.0.0.1:4318/v1/traces"
+protocol = "binary"
+
+[otel.metrics_exporter.otlp-http]
+endpoint = "http://127.0.0.1:4318/v1/metrics"
+protocol = "binary"

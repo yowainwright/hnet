@@ -61,7 +61,11 @@ def attributes($signal): [
         body: {kvlistValue: {values: [denied("log-body")]}},
         attributes: (attributes("log") + [
           {key: "shell.duration_ms", value: {intValue: "12"}},
-          {key: "shell.exit_code", value: {intValue: "1"}}
+          {key: "shell.exit_code", value: {intValue: "1"}},
+          {key: "input_tokens", value: {intValue: "30"}},
+          {key: "output_tokens", value: {intValue: "8"}},
+          {key: "cache_read_tokens", value: {intValue: "12"}},
+          {key: "cache_creation_tokens", value: {intValue: "3"}}
         ])
       }, {
         timeUnixNano: "1700000000000000000",

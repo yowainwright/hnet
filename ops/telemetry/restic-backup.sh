@@ -22,7 +22,7 @@ has_password_command=${RESTIC_PASSWORD_COMMAND:+yes}
 
 command -v restic >/dev/null 2>&1 || fail "Missing required command: restic"
 
-backup_path="$script_dir/backups/$backup_name"
+backup_path="${HNET_BACKUP_DIR:-$script_dir/backups}/$backup_name"
 [[ -d $backup_path && ! -L $backup_path ]] || fail "Backup does not exist: $backup_name"
 
 restic backup --tag agent-telemetry -- "$backup_path"

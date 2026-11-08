@@ -29,6 +29,8 @@ def masked_attributes:
   .timeUnixNano == "1700000000000000000" and
   .observedTimeUnixNano == "1700000000001000000" and .severityNumber == 17 and .severityText == "ERROR" and
   (attributes | .["shell.duration_ms"] == "12" and .["shell.exit_code"] == "1")) and
+($logs[0] | attributes | .input_tokens == "30" and .output_tokens == "8" and
+  .cache_read_tokens == "12" and .cache_creation_tokens == "3") and
 ($logs[1] | .eventName == "codex.api_request" and .severityText == "ERROR" and
   (.severityNumber // 0) == 0 and .timeUnixNano == "1700000000000000000") and
 ($metrics[0] | .unit == "{token}" and .description == "Tokens used" and

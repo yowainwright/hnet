@@ -122,7 +122,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 6
+        "y": 20
       },
       "id": 5,
       "targets": [
@@ -134,7 +134,7 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "timeSeries",
-          "rawSql": "SELECT toStartOfInterval(events.time, INTERVAL 5 minute) AS time, client, count() AS calls\nFROM otel.agent_calls AS events\nWHERE $__timeFilter(events.time)\nGROUP BY time, client ORDER BY time",
+          "rawSql": "SELECT toStartOfInterval(events.time, INTERVAL 5 minute) AS time, client, if(model = '', 'unknown', model) AS model, count() AS calls\nFROM otel.agent_calls AS events\nWHERE $__timeFilter(events.time)\nGROUP BY time, client, model ORDER BY time",
           "refId": "A"
         }
       ],
@@ -150,7 +150,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 6
+        "y": 20
       },
       "id": 6,
       "targets": [
@@ -162,12 +162,13 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "timeSeries",
-          "rawSql": "SELECT toStartOfInterval(TimeUnix, INTERVAL 5 minute) AS time, ServiceName AS client, coalesce(nullIf(Attributes['gen_ai.token.type'], ''), nullIf(Attributes['token_type'], ''), nullIf(Attributes['type'], ''), 'total') AS token_type, sum(Sum) AS tokens\nFROM otel.otel_metrics_histogram\nWHERE positionCaseInsensitive(MetricName, 'token') > 0 AND $__timeFilter(TimeUnix)\nGROUP BY time, client, token_type ORDER BY time",
+          "rawSql": "SELECT toStartOfInterval(events.time, INTERVAL 5 minute) AS time, client, model, sum(input_tokens) AS input_tokens, sum(output_tokens) AS output_tokens, sum(cached_input_tokens) AS cached_input_tokens\nFROM otel.agent_usage AS events\nWHERE $__timeFilter(events.time)\nGROUP BY time, client, model ORDER BY time",
           "refId": "A"
         }
       ],
       "title": "Tokens over time",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Completed-response usage. Input includes cache reads and writes; cached input is a subset. Output includes reasoning where reported. Metric snapshots are excluded."
     },
     {
       "datasource": {
@@ -178,7 +179,7 @@
         "h": 9,
         "w": 14,
         "x": 0,
-        "y": 14
+        "y": 28
       },
       "id": 7,
       "targets": [
@@ -190,7 +191,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT session, any(client) AS client, any(host) AS host, min(time) AS started, max(time) AS last_seen, count() AS events\nFROM otel.agent_events\nWHERE session != '' AND $__timeFilter(time)\nGROUP BY session ORDER BY last_seen DESC LIMIT 100",
+          "rawSql": "SELECT session, any(client) AS client, any(host) AS host, groupUniqArrayIf(model, model != '') AS models, min(time) AS started, max(time) AS last_seen, count() AS events\nFROM otel.agent_events\nWHERE session != '' AND $__timeFilter(time)\nGROUP BY session ORDER BY last_seen DESC LIMIT 100",
           "refId": "A"
         }
       ],
@@ -206,7 +207,7 @@
         "h": 9,
         "w": 10,
         "x": 14,
-        "y": 14
+        "y": 28
       },
       "id": 8,
       "targets": [
@@ -234,7 +235,7 @@
         "h": 5,
         "w": 4,
         "x": 0,
-        "y": 23
+        "y": 37
       },
       "id": 9,
       "targets": [
@@ -262,7 +263,7 @@
         "h": 5,
         "w": 4,
         "x": 4,
-        "y": 23
+        "y": 37
       },
       "id": 10,
       "targets": [
@@ -290,7 +291,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 23
+        "y": 37
       },
       "id": 11,
       "targets": [
@@ -318,7 +319,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 23
+        "y": 37
       },
       "id": 12,
       "targets": [
@@ -346,7 +347,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 31
+        "y": 45
       },
       "id": 13,
       "targets": [
@@ -374,7 +375,7 @@
         "h": 5,
         "w": 6,
         "x": 0,
-        "y": 39
+        "y": 53
       },
       "id": 14,
       "targets": [
@@ -402,7 +403,7 @@
         "h": 8,
         "w": 18,
         "x": 6,
-        "y": 39
+        "y": 53
       },
       "id": 15,
       "targets": [
@@ -420,11 +421,173 @@
       ],
       "title": "Recent dotfiles installs",
       "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 0,
+        "y": 6
+      },
+      "id": 16,
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT sumOrNull(input_tokens) AS tokens FROM otel.agent_usage WHERE $__timeFilter(time)",
+          "refId": "A"
+        }
+      ],
+      "title": "Input tokens",
+      "type": "stat",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No usage received"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 8,
+        "y": 6
+      },
+      "id": 17,
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT sumOrNull(output_tokens) AS tokens FROM otel.agent_usage WHERE $__timeFilter(time)",
+          "refId": "A"
+        }
+      ],
+      "title": "Output tokens",
+      "type": "stat",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No usage received"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 16,
+        "y": 6
+      },
+      "id": 18,
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT sumOrNull(cached_input_tokens) AS tokens FROM otel.agent_usage WHERE $__timeFilter(time)",
+          "refId": "A"
+        }
+      ],
+      "title": "Cached input tokens",
+      "type": "stat",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No usage received"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 11
+      },
+      "id": 19,
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT client, model, uniqExact(host) AS hosts, count() AS completed_responses, sum(input_tokens) AS input_tokens, sum(output_tokens) AS output_tokens, sum(cached_input_tokens) AS cached_input_tokens, sum(cache_creation_tokens) AS cache_creation_tokens, sum(reasoning_output_tokens) AS reasoning_output_tokens\nFROM otel.agent_usage\nWHERE $__timeFilter(time)\nGROUP BY client, model ORDER BY input_tokens DESC, output_tokens DESC",
+          "refId": "A"
+        }
+      ],
+      "title": "Usage by model",
+      "type": "table",
+      "description": "Input includes cache reads and writes. Cached input and cache creation are input subsets; reasoning is an output subset. These are usage counts, not subscription charges."
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 61
+      },
+      "id": 20,
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT time, host, client, model, session, input_tokens, output_tokens, cached_input_tokens, cache_creation_tokens, reasoning_output_tokens, duration_ms FROM otel.agent_usage WHERE $__timeFilter(time) ORDER BY time DESC LIMIT 100",
+          "refId": "A"
+        }
+      ],
+      "title": "Recent model usage",
+      "type": "table"
     }
   ],
   "refresh": "30s",
   "schemaVersion": 42,
   "title": "Agent usage and sessions",
   "uid": "agent-telemetry",
-  "version": 1
+  "version": 2
 }
