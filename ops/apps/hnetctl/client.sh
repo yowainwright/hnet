@@ -75,12 +75,12 @@ client_check_installed_archive() {
   [[ $client_prerequisites_only == false ]] || return 0
   [[ -z ${HNET_PACKAGE_ROOT:-} ]] || return 0
   [[ ! -e "$client_source/.git" ]] || return 0
-  [[ $client_source != "$client_prefix" ]] || return 0
   client_reject_symlinks "$client_prefix/.hnet-client"
   [[ -f "$client_prefix/.hnet-client" ]] || return 0
   client_require_managed_prefix
   local installed="$client_prefix/ops/apps/hnetctl/hnetctl"
   client_reject_symlinks "$installed"
+  [[ ! "$client_source" -ef "$client_prefix" ]] || return 0
   [[ -x $installed ]] || fail "Use the installed package's hnetctl to check this enrollment."
   HNET_CLIENT_HOME="$client_prefix" exec "$installed" client-check "$@"
 }
