@@ -3,6 +3,7 @@
 set -euo pipefail
 
 main() {
+  set +x
   umask 077
   local mode=${1:---dry-run} days=${BACKUP_RETENTION_DAYS:-30} ids=() id listing
   [[ $# -le 1 && ($mode == --dry-run || $mode == --apply) ]] || fail "Usage: retention.sh [--dry-run|--apply]"
