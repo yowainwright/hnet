@@ -74,7 +74,7 @@ TOOL
 assert_restic_failure() {
   local status=${1:?} category=${2:?} message=${3:?} output
   if output=$(PATH="$test_root/bin:$PATH" HNET_TEST_RESTIC_EXIT="$status" HNET_TEST_RESTIC_MESSAGE="$message" \
-    "$repo_dir/ops/telemetry/retention.sh" 2>&1); then
+    bash -x "$repo_dir/ops/telemetry/retention.sh" 2>&1); then
     fail "Failed Restic command was accepted."
   fi
   [[ $output == *"exit $status, category $category"* ]] || fail "Restic error classification is missing."
