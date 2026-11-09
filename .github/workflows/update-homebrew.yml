@@ -1,0 +1,24 @@
+name: Update Homebrew Formula
+
+on:
+  workflow_call:
+    inputs:
+      tag_name:
+        required: true
+        type: string
+    secrets:
+      HOMEBREW_TAP_TOKEN:
+        required: true
+
+permissions: {}
+
+jobs:
+  update-formula:
+    permissions:
+      contents: read
+    uses: yowainwright/homebrew-tap/.github/workflows/publish-formula.yml@0d1d125b0054cc536da545ad88110cb543116539
+    with:
+      package: hnet
+      tag: ${{ inputs.tag_name }}
+    secrets:
+      tap_token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
