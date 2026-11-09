@@ -93,6 +93,20 @@ is an unmanaged tap inventory draft. The preview workflow scans source/history
 and saves review artifacts; it does not create tags, publish releases, or update
 the tap. See [package lifecycle](ops/clients/README.md#package-lifecycle).
 
+<!-- Local release automation from ops/scripts/release.sh -->
+
+Build, test, scan, verify checksums, and generate preview release notes with:
+
+```sh
+./ops/scripts/release.sh
+```
+
+To publish an explicitly unsupported GitHub prerelease, the maintainer runs
+`./ops/scripts/release.sh --publish`. It requires a clean checkout matching public
+GitHub `main`, successful Linux/macOS Actions checks, and an unused version tag.
+It uploads the verified archives and checksums without changing the tap or
+starting services. Commit and merge script changes before using publish mode.
+
 The first release targets macOS, Codex, Claude Code, a private local/Tailscale
 central stack, and optional Synology backups. General ChatGPT conversation
 telemetry is unverified; Kubernetes remains experimental. exe.dev is paused.
