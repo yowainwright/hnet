@@ -93,19 +93,45 @@ is an unmanaged tap inventory draft. The preview workflow scans source/history
 and saves review artifacts; it does not create tags, publish releases, or update
 the tap. See [package lifecycle](ops/clients/README.md#package-lifecycle).
 
-<!-- Local release automation from ops/scripts/release.sh -->
+<!-- Release commands and workflow behavior from mise.toml, ops/scripts/release.sh, .github/workflows/release.yml, and .github/workflows/update-homebrew.yml -->
 
-Build, test, scan, verify checksums, and generate preview release notes with:
+The release entrypoint follows pk: select a version, validate locally, confirm,
+then tag, push, and dispatch the release workflow. Use the Mise tasks:
 
 ```sh
-./ops/scripts/release.sh
+mise run release-preview                    # Offline build and verification
+mise run release-dry-run -- v0.2.0-rc.1     # Full preflight without publishing
+mise run release                           # Interactive version picker
+mise run release -- v0.2.0-rc.1            # Explicit version; still confirms
 ```
 
-To publish an explicitly unsupported GitHub prerelease, the maintainer runs
-`./ops/scripts/release.sh --publish`. It requires a clean checkout matching public
-GitHub `main`, successful Linux/macOS Actions checks, and an unused version tag.
-It uploads the verified archives and checksums without changing the tap or
-starting services. Commit and merge script changes before using publish mode.
+Release from a clean `main` matching `origin/main`, after Linux/macOS CI passes.
+The selected tag supplies the packaged version; source `VERSION` remains the
+development fallback. Tagging does not edit or commit source files.
+
+The workflow runs from the selected tag and requires its commit to belong to
+`main`. Later commits on `main` do not change the release source or signing
+identity. If dispatch fails after pushing a tag, retry using that same tag:
+
+```sh
+gh workflow run release.yml --repo yowainwright/hnet \
+  --ref v0.2.0-rc.1 --field tag_name=v0.2.0-rc.1
+```
+
+The workflow checks the tagged source, signs checksums with GitHub OIDC/cosign,
+attests archive provenance, downloads and verifies the draft assets, and publishes
+them. Provenance verification requires the selected source commit and this
+repository's release workflow, using [GitHub's attestation action](https://github.com/actions/attest).
+Release candidates
+skip Homebrew. Stable releases call the tap's pinned reusable publisher, which
+opens a formula PR and waits for its required checks and merge. Configure the
+repository secret `HOMEBREW_TAP_TOKEN` with access limited to the tap for that
+stable-release path.
+
+Stable publication is blocked while `stable_release_ready` is false in
+`ops/clients/homebrew-hnet.json`. Keep it false until queue expiry, backup
+restore/retention, dependency/license review, and native Homebrew validation on
+supported Macs are proven. The existing `v0.1.0` preview is preserved; choose a new tag.
 
 The first release targets macOS, Codex, Claude Code, a private local/Tailscale
 central stack, and optional Synology backups. General ChatGPT conversation

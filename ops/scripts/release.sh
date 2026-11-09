@@ -1,117 +1,262 @@
 #!/usr/bin/env bash
-
 set -euo pipefail
 
 script_parent=${BASH_SOURCE[0]%/*}
 repo_dir=$(cd -- "$script_parent/../.." && pwd)
 
-main() {
-  [[ $# -le 1 ]] || fail "Usage: release.sh [--preview|--publish]"
-  local mode=${1:---preview}
-  case "$mode" in
-  --preview | --publish) ;;
-  --help)
-    echo "Usage: release.sh [--preview|--publish]"
-    return
-    ;;
-  *) fail "Usage: release.sh [--preview|--publish]" ;;
-  esac
-  cd "$repo_dir"
-  release_context
-  release_run "$mode"
+release_entry() {
+  [[ ${_HNET_RELEASE_SOURCED:-false} != true ]] || return 0
+  release_main "$@"
 }
 
-release_run() {
-  local mode=${1:?}
-  if [[ $mode == --publish ]]; then release_preflight; fi
-  release_build
-  release_notes
-  if [[ $mode == --publish ]]; then
-    release_publish
+release_main() {
+  release_parse "$@" || return
+  if [[ $mode == help ]]; then
+    echo 'Usage: release.sh [--preview|--dry-run|--publish] [v0.x.y[-rc.N]]'
     return
   fi
-  echo "Preview ready in the release directory; nothing published."
-  echo "After review and merge, run: ./ops/scripts/release.sh --publish"
+  release_prepare || return
+  [[ $mode != preview && $mode != dry-run ]] || {
+    echo "Preview passed; no GitHub state changed."
+    return
+  }
+  release_confirm || return
+  release_dispatch
+}
+
+release_prepare() {
+  cd "$repo_dir" || return
+  repo=$(jq -er '.repo' ops/clients/homebrew-hnet.json) || return
+  revision=$(git rev-parse HEAD) || return
+  source_state=clean
+  [[ -z $(git status --porcelain) ]] || source_state='uncommitted changes'
+  if [[ $mode != preview ]]; then release_preflight || return; fi
+  release_select || return
+  release_context || return
+  if [[ $mode != preview ]]; then
+    release_require_ready || return
+    release_require_available || return
+  fi
+  release_build
+}
+
+release_parse() {
+  mode=publish
+  tag=''
+  while [[ $# -gt 0 ]]; do
+    release_parse_option "$1" || return
+    shift
+  done
+  [[ -z $tag ]] || release_validate_tag "$tag"
+}
+
+release_parse_option() {
+  case "${1:?}" in
+  --preview) mode=preview ;;
+  --dry-run) mode=dry-run ;;
+  --publish) mode=publish ;;
+  --help) mode=help ;;
+  v*)
+    [[ -z $tag ]] || {
+      release_fail 'Specify one version.'
+      return
+    }
+    tag=${1:?}
+    ;;
+  *) release_fail 'Usage: release.sh [--preview|--dry-run|--publish] [v0.x.y[-rc.N]]' ;;
+  esac
+}
+
+release_preflight() {
+  release_require_clean_main || return
+  local source_repo
+  gh auth status >/dev/null 2>&1 || {
+    release_fail 'Authenticate GitHub CLI before releasing.'
+    return
+  }
+  source_repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner) || return
+  [[ $source_repo == "$repo" ]] || {
+    release_fail 'Wrong source repository.'
+    return
+  }
+  release_check_ci
+}
+
+release_require_clean_main() {
+  local remote_main
+  [[ -z $(git status --porcelain) ]] || {
+    release_fail 'Commit and merge changes before releasing.'
+    return
+  }
+  [[ $(git branch --show-current) == main ]] || {
+    release_fail 'Release from main.'
+    return
+  }
+  git fetch --quiet origin main --tags || return
+  remote_main=$(git rev-parse origin/main) || return
+  [[ $remote_main == "$revision" ]] || release_fail 'Local main must match origin/main.'
+}
+
+release_select() {
+  [[ -z $tag ]] || return 0
+  if [[ $mode == preview ]]; then
+    tag="v$(<VERSION)"
+    return
+  fi
+  local current candidate
+  current=$(git -c versionsort.suffix=- tag --list 'v0.*' --sort=-version:refname | sed -n '1p') || return
+  current=${current:-v0.0.0}
+  candidate=$(release_candidate "$current") || return
+  printf 'Current: %s\n1) %s (recommended)\n2) custom version\n' "$current" "$candidate"
+  release_prompt_choice "$candidate" || return
+  release_validate_tag "$tag"
+}
+
+release_prompt_choice() {
+  local candidate=${1:?} choice
+  read -r -p 'Choose a version [1]: ' choice || return
+  case "${choice:-1}" in
+  1) tag=$candidate ;;
+  2) read -r -p 'Version (v0.x.y or v0.x.y-rc.N): ' tag ;;
+  *) release_fail 'Unknown version choice.' ;;
+  esac
+}
+
+release_candidate() {
+  local current=${1:?} core minor _patch suffix
+  core=${current#v}
+  core=${core%%-*}
+  IFS=. read -r _ minor _patch <<<"$core"
+  case "$current" in
+  *-rc.*)
+    suffix=${current##*-rc.}
+    [[ $suffix =~ ^(0|[1-9][0-9]*)$ ]] || return 1
+    printf 'v%s-rc.%s' "$core" "$((suffix + 1))"
+    ;;
+  *) printf 'v0.%s.0-rc.1' "$((minor + 1))" ;;
+  esac
 }
 
 release_context() {
-  version=$(<VERSION)
-  [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "VERSION must be a stable semantic version."
-  revision=$(git rev-parse HEAD)
-  source_state=clean
-  [[ -z $(git status --porcelain) ]] || source_state="uncommitted changes"
-  repo=$(jq -er '.repo' ops/clients/homebrew-hnet.json)
-  [[ $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail "Invalid release repository."
+  release_validate_tag "$tag" || return
+  version=${tag#v}
   output=${HNET_RELEASE_DIR:-"$repo_dir/dist"}
   [[ $output == /* ]] || output="$repo_dir/$output"
   export HNET_RELEASE_DIR="$output"
   notes="$output/hnet-$version-NOTES.md"
 }
 
-release_preflight() {
-  command -v gh >/dev/null 2>&1 || fail "GitHub CLI is required to publish."
-  [[ -z $(git status --porcelain) ]] || fail "Publish requires a clean checkout; commit and merge changes first."
-  local remote_main private tag_count
-  remote_main=$(gh api --method GET "repos/$repo/git/ref/heads/main" --jq '.object.sha')
-  [[ $remote_main == "$revision" ]] || fail "Publish requires the reviewed GitHub main revision."
-  private=$(gh api --method GET "repos/$repo" --jq '.private')
-  [[ $private == false ]] || fail "The public Homebrew release requires a public repository."
-  tag_count=$(gh api --method GET "repos/$repo/git/matching-refs/tags/v$version" \
-    --jq "map(select(.ref == \"refs/tags/v$version\")) | length")
-  [[ $tag_count == 0 ]] || fail "Release tag already exists; never replace published assets."
-  release_check_ci
+release_require_ready() {
+  [[ $version != *-* ]] || return 0
+  jq -e '.stable_release_ready == true' ops/clients/homebrew-hnet.json >/dev/null ||
+    release_fail 'Stable release gates are incomplete; choose an rc tag.'
+}
+
+release_require_available() {
+  local tags releases
+  if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+    release_fail 'Local release tag already exists.'
+    return
+  fi
+  tags=$(gh api --method GET "repos/$repo/git/matching-refs/tags/$tag" \
+    --jq "map(select(.ref == \"refs/tags/$tag\")) | length") || return
+  [[ $tags == 0 ]] || {
+    release_fail 'Remote release tag already exists.'
+    return
+  }
+  releases=$(gh api --method GET --paginate --slurp "repos/$repo/releases?per_page=100") || return
+  jq -e --arg tag "$tag" '[.[][] | select(.tag_name == $tag)] | length == 0' <<<"$releases" >/dev/null ||
+    release_fail 'GitHub release already exists.'
 }
 
 release_check_ci() {
   local checks
-  checks=$(gh api --method GET --paginate --slurp "repos/$repo/commits/$revision/check-runs?per_page=100")
+  checks=$(gh api --method GET --paginate --slurp "repos/$repo/commits/$revision/check-runs?per_page=100") || return
   jq -e '
     [.[] | .check_runs[] | select(.app.id == 15368)] as $checks |
     ["validate", "macos-client"] | all(
-      . as $name |
-      [$checks[] | select(.name == $name)] | max_by(.id) |
+      . as $name | [$checks[] | select(.name == $name)] | max_by(.id) |
       .status == "completed" and .conclusion == "success"
-    )' <<<"$checks" >/dev/null || fail "Latest Linux and macOS GitHub Actions checks must pass."
+    )' <<<"$checks" >/dev/null || release_fail 'Latest Linux and macOS Actions checks must pass.'
 }
 
 release_build() {
-  "$repo_dir/tests/ops/clients/release_test.sh"
-  "$repo_dir/ops/scripts/secret-scan.sh"
-  "$repo_dir/ops/apps/hnetctl/hnetctl" release-bundle
-  (cd "$output" && shasum -a 256 -c "hnet-$version-SHA256SUMS")
+  env -u HNET_RELEASE_VERSION "$repo_dir/tests/ops/clients/release_test.sh" || return
+  "$repo_dir/ops/scripts/secret-scan.sh" || return
+  HNET_RELEASE_VERSION="$version" "$repo_dir/ops/apps/hnetctl/hnetctl" release-bundle || return
+  HNET_RELEASE_VERSION="$version" "$repo_dir/ops/scripts/verify-release-assets.sh" "$output" || return
+  release_notes
 }
 
 release_notes() {
-  cat >"$notes" <<EOF
-# hnet $version preview
+  cat >"$notes" <<EOF || return
+# hnet $version
 
-Package preview from commit $revision for trusted Macs using Codex and Claude Code.
+Built from commit $revision for trusted Macs using Codex and Claude Code.
 Source tree: $source_state.
-This is an unsupported prerelease for evaluating installation and enrollment.
-
-Archives include portable scripts, configuration, and the MIT license. Applications
-and container images are separate prerequisites. Enrollment is explicit.
-
-Known limits: strict queued-record expiry, backup restore/retention verification,
-local backup staging expiry, build provenance, and real Homebrew validation across
-both Mac architectures remain supported-release gates. Durable queues are retained.
-General ChatGPT conversation tracking is unverified; Kubernetes is experimental.
+Applications and container images are separate prerequisites. Enrollment is explicit.
 EOF
+  if [[ $version == *-* ]]; then
+    cat >>"$notes" <<'EOF'
+
+This is an unsupported release candidate. Stable publication requires verified
+queue expiry, backup restore/retention, dependency/license review, and native
+Homebrew operation on supported Macs. Enrollment is explicit; preview installation
+does not establish supported-release readiness.
+EOF
+  fi
 }
 
-release_publish() {
-  [[ -z $(git status --porcelain) ]] || fail "Checkout changed during preparation; publication stopped."
-  [[ $(git rev-parse HEAD) == "$revision" ]] || fail "HEAD changed during preparation; publication stopped."
-  gh release create "v$version" --repo "$repo" --target "$revision" \
-    --title "hnet $version preview" --prerelease --latest=false --notes-file "$notes" \
-    "$output/hnet-$version-darwin-arm64.tar.gz" \
-    "$output/hnet-$version-darwin-amd64.tar.gz" \
-    "$output/hnet-$version-SHA256SUMS"
+release_confirm() {
+  local answer
+  printf 'Selected %s at %s\n' "$tag" "$revision"
+  read -r -p 'Tag, push, and dispatch release.yml? [y/N] ' answer || return
+  [[ $answer == y || $answer == Y ]] || release_fail 'Release canceled.'
 }
 
-fail() {
+release_dispatch() {
+  [[ -z $(git status --porcelain) && $(git rev-parse HEAD) == "$revision" ]] ||
+    {
+      release_fail 'Source changed during preparation.'
+      return
+    }
+  git tag "$tag" "$revision" || return
+  git push origin "refs/tags/$tag" || return
+  gh workflow run release.yml --repo "$repo" --ref "$tag" --field "tag_name=$tag" ||
+    {
+      release_fail 'Tag pushed; workflow dispatch failed. Dispatch release.yml for that tag manually.'
+      return
+    }
+  printf 'Dispatched release.yml for %s. Stable releases continue to Homebrew automatically.\n' "$tag"
+}
+
+release_source_revision() {
+  local release_tag=${1:?} workflow_ref=${2:?} dispatch_revision=${3:?} source_revision
+  release_validate_tag "$release_tag" || return
+  [[ $workflow_ref == "refs/tags/$release_tag" ]] || {
+    release_fail 'Dispatch from the release tag.'
+    return
+  }
+  source_revision=$(git rev-parse HEAD) || return
+  [[ $source_revision == "$dispatch_revision" ]] || {
+    release_fail 'Release tag changed during dispatch.'
+    return
+  }
+  git merge-base --is-ancestor "$source_revision" origin/main || {
+    release_fail 'Release commit must belong to main.'
+    return
+  }
+  printf '%s' "$source_revision"
+}
+
+release_validate_tag() {
+  local pattern='^v0\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+  [[ ${1:?} =~ $pattern ]] || release_fail 'Expected a v-prefixed v0 semantic version.'
+}
+
+release_fail() {
   echo "$1" >&2
-  exit 1
+  return 1
 }
 
-main "$@"
+release_entry "$@"

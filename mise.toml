@@ -21,3 +21,35 @@ shfmt = "3.14.0"
 "apt:zsh" = { version = "latest", os = "linux" }
 "brew-cask:orbstack" = { version = "latest", os = "macos", adopt = true }
 "brew-cask:tailscale-app" = { version = "latest", os = "macos", adopt = true }
+
+[tasks.lint]
+description = "Check shell syntax and formatting"
+run = "./ops/scripts/lint.sh --strict"
+
+[tasks.security]
+description = "Scan local history and publication inputs"
+run = "./ops/scripts/secret-scan.sh"
+
+[tasks.test-release]
+description = "Test release selection, guards, packaging, and lifecycle"
+run = ["tests/ops/scripts/release_test.sh", "tests/ops/clients/release_test.sh"]
+
+[tasks.check]
+description = "Run local release code checks"
+run = ["mise run lint", "mise run test-release", "mise run security"]
+
+[tasks.release-preview]
+description = "Build and verify release archives without publishing"
+run = "bash ops/scripts/release.sh --preview"
+
+[tasks.release-verify]
+description = "Verify release archives and their checksums"
+run = "bash ops/scripts/verify-release-assets.sh"
+
+[tasks.release-dry-run]
+description = "Select a version and validate a release without tagging or publishing"
+run = "bash ops/scripts/release.sh --dry-run"
+
+[tasks.release]
+description = "Select, validate, confirm, and dispatch a v0 release like pk"
+run = "bash ops/scripts/release.sh"

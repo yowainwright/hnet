@@ -19,7 +19,24 @@ main() {
   [[ $("$test_root/hnet/hnetctl" --version) == "hnetctl $version" ]] || fail "Archive launcher version failed."
   test_prefix "$test_root/apple" "$version"
   test_prefix "$test_root/intel" "$version"
+  test_release_candidate
   echo "Versioned package, stable entrypoint, upgrade and removal tests passed."
+}
+
+test_release_candidate() {
+  local candidate=0.2.0-rc.1 original
+  original=$(<"$repo_dir/VERSION")
+  HNET_RELEASE_VERSION="$candidate" "$repo_dir/ops/apps/hnetctl/hnetctl" release-bundle
+  HNET_RELEASE_VERSION="$candidate" "$repo_dir/ops/scripts/verify-release-assets.sh" "$HNET_RELEASE_DIR" >/dev/null
+  mkdir -p "$test_root/candidate"
+  tar -xzf "$HNET_RELEASE_DIR/hnet-$candidate-darwin-arm64.tar.gz" -C "$test_root/candidate"
+  (cd "$test_root/candidate/hnet" && shasum -a 256 -c SHA256SUMS >/dev/null)
+  [[ $("$test_root/candidate/hnet/hnetctl" --version) == "hnetctl $candidate" ]] || fail "Candidate version missing."
+  [[ $(<"$repo_dir/VERSION") == "$original" ]] || fail "Release changed source VERSION."
+  printf '\ncorrupted\n' >>"$HNET_RELEASE_DIR/hnet-$candidate-darwin-arm64.tar.gz"
+  if HNET_RELEASE_VERSION="$candidate" "$repo_dir/ops/scripts/verify-release-assets.sh" "$HNET_RELEASE_DIR" >/dev/null 2>&1; then
+    fail "Release verifier accepted a modified archive."
+  fi
 }
 
 test_prefix() {

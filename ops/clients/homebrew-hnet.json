@@ -10,6 +10,7 @@
   "asset_prefix": "hnet",
   "asset_template": "hnet-%{version}-%{os}-%{arch}.tar.gz",
   "managed": false,
+  "stable_release_ready": false,
   "readme": false,
   "platforms": ["darwin"],
   "archive": true,

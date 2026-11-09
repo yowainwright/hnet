@@ -25,14 +25,8 @@ jobs:
         with:
           version: 2026.9.0
           cache: false
-      - name: Scan source and local history
-        run: ops/scripts/secret-scan.sh
-      - name: Verify and build package once
-        run: |
-          tests/ops/clients/release_test.sh
-          ./ops/apps/hnetctl/hnetctl release-bundle
-          cd dist
-          shasum -a 256 -c "hnet-$(cat ../VERSION)-SHA256SUMS"
+      - name: Test, scan, build, and verify preview
+        run: mise run release-preview
       - name: Save review artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -40,5 +34,6 @@ jobs:
           path: |
             dist/hnet-*-darwin-*.tar.gz
             dist/hnet-*-SHA256SUMS
+            dist/hnet-*-NOTES.md
           if-no-files-found: error
           retention-days: 7
