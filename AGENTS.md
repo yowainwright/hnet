@@ -25,11 +25,20 @@ Local `.env*` files are ignored and may contain secret references.
 Before editing, read the relevant local files and prefer existing repo patterns.
 Keep changes scoped to the smallest operational surface that solves the task.
 
-Use `hnetctl` as the operational entrypoint:
+Use the root [README](README.md) for setup and operations. The
+[hnet-setup skill](.agents/skills/hnet-setup/SKILL.md) guides central and edge
+enrollment without duplicating those instructions.
+
+Use `hnetctl` as the operational entrypoint. Inspect the intended role first:
 
 ```bash
-./ops/apps/hnetctl/hnetctl up
+./ops/apps/hnetctl/hnetctl status       # Central services
+./ops/apps/hnetctl/hnetctl edge-status  # Local collection
 ```
+
+For approved Compose startup, use `start` on the central host and
+`client-install` for enrollment. `serve` changes private Tailscale forwarding.
+`up` also bootstraps experimental Kubernetes; use it only when that is requested.
 
 Use the interactive operator dashboard only when a human is present:
 

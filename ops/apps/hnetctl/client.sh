@@ -289,8 +289,8 @@ client_prepare_settings() {
 }
 
 client_prompt_settings() {
-  [[ -t 0 ]] || fail "Provide --config FILE for noninteractive enrollment. See ops/clients/README.md."
-  echo "Choose an unused configured slot: mac-mini-1 or mac-mini-2."
+  [[ -t 0 ]] || fail "Provide --config FILE for noninteractive enrollment. See README.md."
+  echo "Use mac-studio on the central host; use an unused mac-mini-1 or mac-mini-2 slot on another Mac."
   read -r -p 'Mac label: ' client_host
   read -r -s -p 'Central Tailscale HTTPS URL including assigned port (hidden): ' client_upstream
   printf '\n'
@@ -321,8 +321,25 @@ client_preflight_install() {
 client_require_managed_prefix() {
   [[ -d $client_prefix ]] || return 0
   [[ -z $(find "$client_prefix" -mindepth 1 -maxdepth 1 -print -quit) ]] && return 0
-  [[ -f "$client_prefix/.hnet-client" ]] || fail "Install location already contains unmanaged files; choose another --prefix."
+  [[ -f "$client_prefix/.hnet-client" ]] || {
+    client_require_central_prefix
+    return
+  }
   [[ $(<"$client_prefix/.hnet-client") == hnet-client-v1 ]] || fail "Install location has an unknown client marker."
+}
+
+client_require_central_prefix() {
+  [[ -n ${HNET_PACKAGE_ROOT:-} && $client_host == mac-studio ]] ||
+    fail "Install location already contains unmanaged files; choose another --prefix."
+  local studio_env="$client_prefix/ops/telemetry/.env.mac-studio"
+  client_reject_symlinks "$studio_env"
+  client_reject_symlinks "$client_prefix/ops/clients"
+  [[ -f $studio_env && ! -e "$client_prefix/ops/clients" ]] ||
+    fail "Central enrollment requires a regular central configuration and no existing client code."
+  load_studio_config public
+  validate_studio_public_config
+  [[ $client_upstream == "https://$TAILSCALE_DNS_NAME:4318" ]] ||
+    fail "Central enrollment must use this host's Tailscale address and mac-studio slot."
 }
 
 client_check_existing_codex() {
@@ -505,7 +522,7 @@ client_validate_relative() {
   [[ $relative != /* ]] || fail "Client manifest contains an absolute path."
   [[ $relative != *..* ]] || fail "Client manifest contains path traversal."
   case "$relative" in
-  install.sh | LICENSE | VERSION | ops/apps/hnetctl/*.sh | ops/apps/hnetctl/hnetctl | ops/clients/* | ops/telemetry/compose.edge.yml | ops/telemetry/collector/edge.yaml | ops/telemetry/.env.edge.example) ;;
+  install.sh | LICENSE | VERSION | README.md | ops/apps/hnetctl/*.sh | ops/apps/hnetctl/hnetctl | ops/clients/* | ops/telemetry/compose.edge.yml | ops/telemetry/collector/edge.yaml | ops/telemetry/.env.edge.example) ;;
   *) fail "Client manifest includes a file outside the client surface." ;;
   esac
   case "$relative" in

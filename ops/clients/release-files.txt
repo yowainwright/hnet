@@ -5,7 +5,7 @@ ops/apps/hnetctl/hnetctl
 ops/apps/hnetctl/client.sh
 ops/apps/hnetctl/release.sh
 ops/clients/Brewfile
-ops/clients/README.md
+README.md
 ops/clients/files.txt
 ops/clients/release-files.txt
 ops/clients/launcher.sh
@@ -18,7 +18,6 @@ ops/clients/zsh/hnetctl.zsh
 ops/telemetry/.env.edge.example
 ops/telemetry/.env.mac-studio.example
 ops/telemetry/.env.restic.nas.example
-ops/telemetry/README.md
 ops/telemetry/backup.sh
 ops/telemetry/restic-backup.sh
 ops/telemetry/retention.sh

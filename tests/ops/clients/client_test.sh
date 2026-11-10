@@ -188,10 +188,57 @@ test_package_enrollment_uses_stable_resources() {
   HNET_CLIENT_HOME="$client_prefix" "$entry" client-check
   env -u HNET_CLIENT_BUNDLE_DIR HNET_CLIENT_HOME="$client_prefix" "$entry" client-bundle
   [[ -f "$client_prefix/dist/hnet-client-macos.tar.gz" ]] || fail "Packaged bundle wrote outside persistent state."
+  test_central_package_enrollment "$entry"
+  test_package_uninstall_startup "$root"
+}
+
+test_package_uninstall_startup() {
+  local root=${1:?}
   zsh -fi -c 'source "$ZDOTDIR/.zshrc"; hnetctl --version'
   rm "$root/opt/hnet"
   zsh -fi -c 'source "$ZDOTDIR/.zshrc"'
   assert_no_secret_leaks
+}
+
+test_central_package_enrollment() {
+  local entry=${1:?} prefix="$test_root/central" config="$test_root/central-enrollment.env"
+  mkdir -p "$prefix/ops/telemetry/backups" "$test_root/central-shell"
+  sed 's/mac-studio.your-tailnet.ts.net/studio.example.ts.net/' \
+    "$repo_dir/ops/telemetry/.env.mac-studio.example" >"$prefix/ops/telemetry/.env.mac-studio"
+  sed 's/:4319/:4318/;s/mac-mini-1/mac-studio/g' "$test_root/enrollment.env" >"$config"
+  cp "$prefix/ops/telemetry/.env.mac-studio" "$test_root/central-before.env"
+  printf 'preserve\n' >"$prefix/ops/telemetry/backups/sentinel"
+  test_central_enrollment_guards "$entry" "$prefix" "$config"
+  ZDOTDIR="$test_root/central-shell" HNET_CODEX_CONFIG="$test_root/central-codex.toml" \
+    "$entry" client-install --yes --prefix "$prefix" --config "$config"
+  cmp -s "$test_root/central-before.env" "$prefix/ops/telemetry/.env.mac-studio" || fail "Central configuration changed."
+  [[ $(<"$prefix/ops/telemetry/backups/sentinel") == preserve ]] || fail "Central backup changed."
+  [[ -f "$prefix/.hnet-client" ]] || fail "Central client enrollment was not recorded."
+  HNET_CLIENT_HOME="$prefix" ZDOTDIR="$test_root/central-shell" HNET_CODEX_CONFIG="$test_root/central-codex.toml" \
+    "$entry" client-check --connection
+}
+
+test_central_enrollment_guards() {
+  local entry=${1:?} prefix=${2:?} config=${3:?}
+  if "$entry" client-install --yes --prefix "$prefix" --config "$test_root/enrollment.env" >/dev/null 2>&1; then
+    fail "An edge slot adopted central state."
+  fi
+  sed 's/studio.example.ts.net/other.example.ts.net/' "$config" >"$test_root/other-central.env"
+  if "$entry" client-install --yes --prefix "$prefix" --config "$test_root/other-central.env" >/dev/null 2>&1; then
+    fail "Central enrollment accepted another host's address."
+  fi
+  [[ ! -e "$prefix/.hnet-client" ]] || fail "Rejected central enrollment marked the directory managed."
+  test_unmanaged_package_prefix "$entry" "$config"
+}
+
+test_unmanaged_package_prefix() {
+  local entry=${1:?} config=${2:?} prefix="$test_root/unmanaged-central"
+  mkdir -p "$prefix"
+  printf 'preserve\n' >"$prefix/unrelated"
+  if "$entry" client-install --yes --prefix "$prefix" --config "$config" >/dev/null 2>&1; then
+    fail "Unrelated unmanaged directory was adopted."
+  fi
+  [[ $(<"$prefix/unrelated") == preserve && ! -e "$prefix/.hnet-client" ]] || fail "Unmanaged directory changed."
 }
 
 test_explicit_dependency_install() {

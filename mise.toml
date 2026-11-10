@@ -51,5 +51,29 @@ description = "Select a version and validate a release without tagging or publis
 run = "bash ops/scripts/release.sh --dry-run"
 
 [tasks.release]
-description = "Select, validate, confirm, and dispatch a v0 release like pk"
+description = "Select, validate, confirm, and dispatch a release"
 run = "bash ops/scripts/release.sh"
+
+[tasks."release:patch"]
+description = "Publish the next patch version"
+run = "bash ops/scripts/release.sh --patch"
+
+[tasks."release:patch:dry-run"]
+description = "Validate the next patch release without publishing"
+run = "bash ops/scripts/release.sh --patch --dry-run"
+
+[tasks."release:minor"]
+description = "Publish the next minor version"
+run = "bash ops/scripts/release.sh --minor"
+
+[tasks."release:minor:dry-run"]
+description = "Validate the next minor release without publishing"
+run = "bash ops/scripts/release.sh --minor --dry-run"
+
+[tasks."release:major"]
+description = "Publish the next major version"
+run = "bash ops/scripts/release.sh --major"
+
+[tasks."release:major:dry-run"]
+description = "Validate the next major release without publishing"
+run = "bash ops/scripts/release.sh --major --dry-run"

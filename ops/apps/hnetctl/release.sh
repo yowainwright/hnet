@@ -40,7 +40,7 @@ release_validate_file() {
   local relative=${1:?}
   [[ $relative != /* && $relative != *..* && $relative != *' '* ]] || fail "Unsafe release manifest path."
   case "$relative" in
-  LICENSE | VERSION | install.sh | ops/apps/hnetctl/* | ops/clients/* | ops/telemetry/*) ;;
+  LICENSE | VERSION | README.md | install.sh | ops/apps/hnetctl/* | ops/clients/* | ops/telemetry/*) ;;
   *) fail "Release file is outside the supported surface." ;;
   esac
   case "$relative" in

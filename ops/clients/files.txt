@@ -4,7 +4,7 @@ VERSION
 ops/apps/hnetctl/hnetctl
 ops/apps/hnetctl/client.sh
 ops/clients/Brewfile
-ops/clients/README.md
+README.md
 ops/clients/files.txt
 ops/clients/codex/config.toml
 ops/clients/zsh/agent-telemetry.zsh
