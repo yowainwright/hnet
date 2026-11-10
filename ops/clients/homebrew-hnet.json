@@ -14,7 +14,7 @@
   "readme": false,
   "platforms": ["darwin"],
   "archive": true,
-  "archive_files": ["ops", "VERSION", "LICENSE", "SHA256SUMS", "install.sh"],
+  "archive_files": ["ops", "VERSION", "LICENSE", "SHA256SUMS", "install.sh", "README.md"],
   "caveats": [
     "Enroll explicitly after installing prerequisites and signing in:",
     "  hnetctl client-install",

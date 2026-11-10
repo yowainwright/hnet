@@ -43,6 +43,7 @@ test_prefix() {
   local root=${1:?} version=${2:?} prefix
   prefix="$root/Cellar/hnet/$version"
   install_package "$prefix"
+  (cd "$prefix/share/hnet" && shasum -a 256 -c SHA256SUMS >/dev/null)
   mkdir -p "$root/opt" "$root/bin"
   ln -s "../Cellar/hnet/$version" "$root/opt/hnet"
   ln -s ../opt/hnet/bin/hnetctl "$root/bin/hnetctl"
@@ -69,11 +70,12 @@ test_upgrade() {
 }
 
 install_package() {
-  local prefix=${1:?}
+  local prefix=${1:?} relative
   mkdir -p "$prefix/bin" "$prefix/share/hnet"
   cp "$test_root/hnet/hnetctl" "$prefix/bin/hnetctl"
-  cp -R "$test_root/hnet/ops" "$prefix/share/hnet/ops"
-  cp "$test_root/hnet/VERSION" "$test_root/hnet/LICENSE" "$test_root/hnet/SHA256SUMS" "$test_root/hnet/install.sh" "$prefix/share/hnet/"
+  while IFS= read -r relative; do
+    cp -R "$test_root/hnet/$relative" "$prefix/share/hnet/"
+  done < <(jq -r '.archive_files[]' "$repo_dir/ops/clients/homebrew-hnet.json")
 }
 
 main

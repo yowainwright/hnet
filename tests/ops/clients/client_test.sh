@@ -180,8 +180,7 @@ test_package_enrollment_uses_stable_resources() {
   tar -xzf "$root/dist/hnet-$(<"$repo_dir/VERSION")-darwin-arm64.tar.gz" -C "$root/unpacked"
   prefix="$root/Cellar/hnet/$(<"$repo_dir/VERSION")"
   mkdir -p "$prefix/bin" "$prefix/share" "$root/opt"
-  cp -R "$root/unpacked/hnet" "$prefix/share/hnet"
-  mv "$prefix/share/hnet/hnetctl" "$prefix/bin/hnetctl"
+  install_declared_package "$root/unpacked/hnet" "$prefix"
   ln -s "../Cellar/hnet/$(<"$repo_dir/VERSION")" "$root/opt/hnet"
   entry="$root/opt/hnet/bin/hnetctl"
   "$entry" client-install --yes --prefix "$client_prefix" --config "$test_root/enrollment.env"
@@ -190,6 +189,15 @@ test_package_enrollment_uses_stable_resources() {
   [[ -f "$client_prefix/dist/hnet-client-macos.tar.gz" ]] || fail "Packaged bundle wrote outside persistent state."
   test_central_package_enrollment "$entry"
   test_package_uninstall_startup "$root"
+}
+
+install_declared_package() {
+  local archive=${1:?} prefix=${2:?} relative
+  mkdir -p "$prefix/share/hnet"
+  cp "$archive/hnetctl" "$prefix/bin/hnetctl"
+  while IFS= read -r relative; do
+    cp -R "$archive/$relative" "$prefix/share/hnet/"
+  done < <(jq -r '.archive_files[]' "$repo_dir/ops/clients/homebrew-hnet.json")
 }
 
 test_package_uninstall_startup() {
