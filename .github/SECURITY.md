@@ -2,13 +2,12 @@
 
 ## Supported versions
 
-`hnet` is maintained from its default branch and does not publish versioned
-releases.
-
-`VERSION` currently identifies a local release candidate, not a published or
-supported release. macOS with Codex and Claude Code is the first release target.
+`hnet` is maintained from its default branch and publishes initial v0.x releases.
+Source `VERSION` is the development fallback; release archives use the selected
+tag's version. macOS with Codex and Claude Code is the first release target.
 Kubernetes and general ChatGPT conversation tracking remain experimental or
-unverified. Publication and supported-release gates are tracked separately.
+unverified. Buffered telemetry has no enforced 24-hour expiry, and backup expiry
+requires explicit maintenance.
 
 The trusted-Mac model includes same-user access to ingestion credentials through
 login Keychain and inherited process environments. Per-device ingestion tokens

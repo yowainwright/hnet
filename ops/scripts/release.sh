@@ -195,14 +195,14 @@ release_notes() {
 Built from commit $revision for trusted Macs using Codex and Claude Code.
 Source tree: $source_state.
 Applications and container images are separate prerequisites. Enrollment is explicit.
+
+Buffered telemetry has no enforced 24-hour expiry. Backup expiry requires explicit
+maintenance. Installing this release does not change running retention policies.
 EOF
   if [[ $version == *-* ]]; then
     cat >>"$notes" <<'EOF'
 
-This is an unsupported release candidate. Stable publication requires verified
-queue expiry, backup restore/retention, dependency/license review, and native
-Homebrew operation on supported Macs. Enrollment is explicit; preview installation
-does not establish supported-release readiness.
+This is an unsupported release candidate.
 EOF
   fi
 }

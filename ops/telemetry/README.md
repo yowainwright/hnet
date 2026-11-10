@@ -504,7 +504,7 @@ age does not bound the age of contained telemetry, and physical deletion depends
 on pruning and other snapshots that reference the same data.
 
 Durable Collector queues currently have no strict queued-record age cap. The
-24-hour target remains a supported-release blocker; `max_elapsed_time` is not a
+24-hour target remains unimplemented; `max_elapsed_time` is not a
 substitute. Live TTL, queue age, backup snapshot age and maintenance delays are
 separate policies. No existing data or running retention configuration is
 changed by installing the tooling.

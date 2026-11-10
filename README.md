@@ -79,7 +79,7 @@ for exact prerequisites, enrollment values, failure messages, and repeat setup.
 
 <!-- Versioned release packaging from VERSION, ops/apps/hnetctl/release.sh, ops/clients/release-files.txt, and ops/clients/homebrew-hnet.json -->
 
-Homebrew distribution is being prepared; no published hnet formula exists yet.
+Install with `brew install yowainwright/tap/hnet`.
 Build local versioned macOS previews with:
 
 ```sh
@@ -102,7 +102,7 @@ then tag, push, and dispatch the release workflow. Use the Mise tasks:
 mise run release-preview                    # Offline build and verification
 mise run release-dry-run -- v0.2.0-rc.1     # Full preflight without publishing
 mise run release                           # Interactive version picker
-mise run release -- v0.2.0-rc.1            # Explicit version; still confirms
+mise run release -- v0.1.1                 # Explicit version; still confirms
 ```
 
 Release from a clean `main` matching `origin/main`, after Linux/macOS CI passes.
@@ -128,16 +128,15 @@ opens a formula PR and waits for its required checks and merge. Configure the
 repository secret `HOMEBREW_TAP_TOKEN` with access limited to the tap for that
 stable-release path.
 
-Stable publication is blocked while `stable_release_ready` is false in
-`ops/clients/homebrew-hnet.json`. Keep it false until queue expiry, backup
-restore/retention, dependency/license review, and native Homebrew validation on
-supported Macs are proven. The existing `v0.1.0` preview is preserved; choose a new tag.
+Stable publication is enabled by `stable_release_ready` in
+`ops/clients/homebrew-hnet.json`. The existing `v0.1.0` preview is preserved;
+publish changes with a new tag.
 
 The first release targets macOS, Codex, Claude Code, a private local/Tailscale
 central stack, and optional Synology backups. General ChatGPT conversation
 telemetry is unverified; Kubernetes remains experimental. exe.dev is paused.
-The strict 24-hour queue age cap remains a release blocker with durable queues
-retained. Backup expiry requires explicit maintenance; installing this code does
+Buffered telemetry has no enforced 24-hour expiry. Backup expiry requires
+explicit maintenance; installing this code does
 not change existing retention or start services.
 
 ## Automatic setup on Macs
