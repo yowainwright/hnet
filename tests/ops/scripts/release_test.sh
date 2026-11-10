@@ -8,6 +8,9 @@ _HNET_RELEASE_SOURCED=true source "$repo_dir/ops/scripts/release.sh"
 
 main() {
   test_version_selection
+  test_version_bumps
+  test_bump_selection
+  test_conflicting_versions
   test_stable_release_preferred
   test_preview_and_dry_run
   test_release_guards
@@ -23,12 +26,15 @@ main() {
 }
 
 test_version_selection() (
+  local tag='' mode='' bump=''
   release_parse --dry-run v0.2.0-rc.1
   [[ $mode == dry-run && $tag == v0.2.0-rc.1 ]]
-  if release_validate_tag v1.0.0 >/dev/null 2>&1; then fail 'Accepted v1 tag.'; fi
+  release_validate_tag v1.0.0
+  if release_validate_tag v01.0.0 >/dev/null 2>&1; then fail 'Accepted leading zero.'; fi
   if release_validate_tag 'v0.2.0;bad' >/dev/null 2>&1; then fail 'Accepted invalid tag.'; fi
   [[ $(release_candidate v0.1.0) == v0.2.0-rc.1 ]]
   [[ $(release_candidate v0.2.0-rc.2) == v0.2.0-rc.3 ]]
+  [[ $(release_candidate v1.2.3) == v1.3.0-rc.1 ]]
   git() { echo v0.1.0; }
   tag=''
   mode=publish
@@ -36,7 +42,42 @@ test_version_selection() (
   [[ $tag == v0.2.0-rc.1 ]]
 )
 
+test_version_bumps() (
+  [[ $(release_next_version v0.1.1 patch) == v0.1.2 ]]
+  [[ $(release_next_version v0.1.1 minor) == v0.2.0 ]]
+  [[ $(release_next_version v0.1.1 major) == v1.0.0 ]]
+  [[ $(release_next_version v1.9.9 patch) == v1.9.10 ]]
+  [[ $(release_next_version v1.9.9 minor) == v1.10.0 ]]
+  [[ $(release_next_version v1.9.9 major) == v2.0.0 ]]
+  if release_next_version v0.1.1 invalid >/dev/null 2>&1; then fail 'Accepted unknown bump.'; fi
+)
+
+test_bump_selection() (
+  local tag='' mode='' bump=''
+  git() { printf '%s\n' v2.0.0-rc.1 v1.10.0 v1.9.9; }
+  release_parse --patch --dry-run
+  release_select
+  [[ $mode == dry-run && $tag == v1.10.1 ]]
+  release_parse --minor
+  release_select
+  [[ $tag == v1.11.0 ]]
+  release_parse --major
+  release_select
+  [[ $tag == v2.0.0 ]]
+  git() { echo v0.1.0-rc.1; }
+  release_parse --patch
+  release_select
+  [[ $tag == v0.0.1 ]]
+)
+
+test_conflicting_versions() (
+  if release_parse --patch --minor >/dev/null 2>&1; then fail 'Accepted two bumps.'; fi
+  if release_parse --patch v0.2.0 >/dev/null 2>&1; then fail 'Accepted bump then tag.'; fi
+  if release_parse v0.2.0 --patch >/dev/null 2>&1; then fail 'Accepted tag then bump.'; fi
+)
+
 test_stable_release_preferred() (
+  local tag='' mode=publish
   git() {
     local sorting="${1:-} ${2:-}"
     if [[ $sorting == '-c versionsort.suffix=-' ]]; then
@@ -45,20 +86,24 @@ test_stable_release_preferred() (
     fi
     printf '%s\n' v0.2.0-rc.2 v0.2.0
   }
-  tag=''
-  mode=publish
   release_select <<<'' >/dev/null
   [[ $tag == v0.3.0-rc.1 ]] || fail 'Picker continued an already-stable release candidate.'
 )
 
 test_preview_and_dry_run() (
+  local tag='' mode='' bump=''
   release_build() { :; }
   release_dispatch() { fail 'Preview dispatched a workflow.'; }
+  git() { if [[ ${1:-} == -c ]]; then echo v0.1.1; else command git "$@"; fi; }
   release_preflight() { fail 'Offline preview reached GitHub.'; }
   release_main --preview v0.2.0-rc.1 >/dev/null
   release_preflight() { :; }
   release_require_available() { :; }
   release_main --dry-run v0.2.0-rc.1 >/dev/null
+  release_main --patch --dry-run >/dev/null
+  [[ $tag == v0.1.2 ]]
+  release_main --major --dry-run >/dev/null
+  [[ $tag == v1.0.0 ]]
 )
 
 test_release_guards() (

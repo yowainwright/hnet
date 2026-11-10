@@ -1,241 +1,171 @@
 # hnet
 
-Private observability for trusted Macs: understand agent and shell health
-without collecting private work.
+Private observability for Codex, Claude Code, and shell activity across trusted
+Macs. View token usage, models, sessions, errors, and duration in Grafana.
 
-## Contents
+## Homelab roles
 
-- [What customers see](#what-customers-see)
-- [Install on another Mac](#install-on-another-mac)
-- [Automatic setup on Macs](#automatic-setup-on-macs)
-- [Codex and Grafana](#codex-and-grafana)
-- [How it works](#how-it-works)
-- [What stays private](#what-stays-private)
-- [Access and retention](#access-and-retention)
-- [Release previews](#release-previews)
+<!-- Central and edge roles from ops/apps/hnetctl/hnetctl and ops/telemetry/compose.mac-studio.yml -->
 
-## What customers see
+Choose one always-on Mac as the **central host** before adding other computers.
 
-<!-- customer-visible capabilities derived from ops/clients and ops/telemetry -->
+| Role | Runs |
+| --- | --- |
+| Central host | Telemetry gateway, ClickHouse storage, and Grafana dashboards |
+| Edge clients | Local collectors that send each Mac's telemetry to the central host |
+| Synology | Optional encrypted backups |
 
-hnet makes slow, expensive, and failing work easier to understand. A dashboard
-can show which service and model ran, how long it took, whether it succeeded,
-and how many tokens it used.
+In Kubernetes, the **[control plane](https://kubernetes.io/docs/concepts/overview/components/)**
+manages a cluster and **worker nodes** run workloads. hnet's central host and edge
+clients describe telemetry roles; enrolling a Mac does not join a Kubernetes cluster.
 
-Dashboard counts, trends, and recent activity use the selected time range.
+## Set up the central host
 
-```text
-service=agent  model=example  operation=tool-call
-duration=2.4s  status=success  tokens_in=820  tokens_out=146
-```
+<!-- Packaged central setup from ops/clients/launcher.sh, ops/telemetry/.env.mac-studio.example, and ops/apps/hnetctl/hnetctl -->
 
-Today the product covers agent, shell, and dotfiles setup activity. Browser and
-frontend events are not enabled.
+1. Install [Homebrew](https://brew.sh), then run on the main Mac:
 
-## Install on another Mac
+   ```sh
+   brew install yowainwright/tap/hnet
+   brew install --cask tailscale-app 1password 1password-cli
+   ```
 
-<!-- Client distribution, prerequisite installation, and readiness checks from install.sh, ops/apps/hnetctl/client.sh, ops/clients/Brewfile, and ops/clients/files.txt -->
+   Install OrbStack with `brew install --cask orbstack` if you do not already
+   use Docker Desktop. Start Docker and enable **Start at login**. Sign into
+   Tailscale and unlock 1Password; enable its **Settings > Developer > Integrate
+   with 1Password CLI** option.
 
-On the working central Mac, build the portable client:
+2. Create an `agent-telemetry` item in your chosen 1Password vault:
+
+   | Field | Requirement |
+   | --- | --- |
+   | `grafana-admin-password` | Generated password, at least 24 characters |
+   | `clickhouse-writer-password` | Different generated password, at least 24 characters |
+   | `clickhouse-reader-password` | Different generated password, at least 24 characters |
+   | `mac-studio-token` | Unique random token for the central Mac |
+   | `mac-mini-1-token` | Unique random token for the first edge Mac |
+   | `mac-mini-2-token` | Unique random token for the second edge Mac |
+
+   Each token needs at least 32 characters using letters, digits, `.`, `_`, `~`,
+   or `-`. Generated 64-character hexadecimal tokens meet that requirement.
+
+3. Create the private configuration outside Homebrew:
+
+   ```sh
+   umask 077
+   state="${HNET_CLIENT_HOME:-$HOME/.local/share/hnet}/ops/telemetry"
+   install -d -m 700 "$state"
+   test -e "$state/.env.mac-studio" || cp \
+     "$(brew --prefix hnet)/share/hnet/ops/telemetry/.env.mac-studio.example" \
+     "$state/.env.mac-studio"
+   chmod 600 "$state/.env.mac-studio"
+   open -e "$state/.env.mac-studio"
+   ```
+
+   Set `TAILSCALE_DNS_NAME` to this Mac's full `.ts.net` name from Tailscale,
+   without `https://` or a port. Replace `YOUR_VAULT` in every `op://` reference.
+   Keep the default ports. Save and close the file; keep secret values in 1Password.
+
+4. Start the services, then configure private Tailscale HTTPS access:
+
+   ```sh
+   hnetctl start
+   hnetctl serve
+   hnetctl status
+   ```
+
+   Approve 1Password when prompted. First startup downloads images and can take
+   several minutes. `serve` configures ports `443`, `4318`, `4319`, and `4320`;
+   review existing Tailscale Serve mappings first and complete any requested
+   HTTPS setup. Do not enable Funnel or router port forwarding.
+
+5. Open `http://localhost:2021/d/agent-telemetry`. Sign in as `admin` with the
+   Grafana password from 1Password. Other Macs use
+   `https://YOUR-CENTRAL-DNS-NAME/d/agent-telemetry`. The dashboard stays empty
+   until an enrolled client sends events. To collect this Mac's own shell and
+   agent telemetry too, run `hnetctl client-install --install-deps` after central
+   startup. Use the `mac-studio` slot, its token reference, and this Mac's own
+   Tailscale URL on port `4318`. The packaged installer preserves central
+   configuration and backups. Then verify from a new terminal with
+   `hnetctl client-check --connection`.
+
+## Add another Mac to the homelab
+
+<!-- Installation and enrollment from ops/apps/hnetctl/client.sh and ops/clients/Brewfile -->
+
+Requires Homebrew, OrbStack or Docker Desktop, Tailscale, 1Password with CLI
+integration enabled, and Codex CLI. The installer can install missing tools:
 
 ```sh
-./ops/apps/hnetctl/hnetctl client-bundle
+brew install yowainwright/tap/hnet
+hnetctl client-install --install-deps
 ```
 
-Transfer `dist/hnet-client-macos.tar.gz` and its `.sha256` file to the new Mac.
-The bundle includes current unpublished client fixes and excludes private
-configuration, credentials, telemetry, and the central services. No Git clone
-is needed on the receiving Mac.
+Complete the requested app sign-ins, unlock 1Password, and rerun
+`hnetctl client-install`. Connect Tailscale to the central host's tailnet.
 
-From the folder containing the transferred files, run:
+For example, enroll the first additional Mac using the existing `mac-mini-1` slot:
 
-```sh
-shasum -a 256 -c hnet-client-macos.tar.gz.sha256
-tar -xzf hnet-client-macos.tar.gz
-cd hnet-client
-./install.sh --install-deps
-```
+| Installer prompt | Example value |
+| --- | --- |
+| Mac label | `mac-mini-1` |
+| Central HTTPS URL | `https://central.YOUR-TAILNET.ts.net:4319` |
+| Token reference | `op://YOUR_VAULT/agent-telemetry/mac-mini-1-token` |
 
-The installer checks prerequisites, asks permission to install missing apps
-through an existing Homebrew installation, and explains the required app
-sign-ins. After completing those sign-ins, rerun `./install.sh`. It prompts
-for this Mac's slot, central address, 1Password reference, and optional personal
-redaction setting. It installs the client into `~/.local/share/hnet`, starts
-the collector, and enrolls the shell and Codex.
+Replace the example hostname and vault with your central host's actual settings.
+On the central host, find the address and token references in its private
+configuration. Enter the reference, never the resolved token.
 
-In a new terminal:
+Use an unused slot and a separate token for every Mac. The second additional Mac
+uses `mac-mini-2`, port `4320`, and its corresponding token. More slots require
+central configuration first; the slot labels do not need to match Mac hardware.
+
+Setup starts the collector and enables shell and Codex telemetry. Open a new
+terminal to verify:
 
 ```sh
 hnetctl client-check --connection
-codex
 ```
 
-The checker verifies tools, login/configuration, collector health, and
-authenticated connectivity. Complete a Codex turn and confirm the assigned
-host and model in Grafana. See the [complete client installation guide](ops/clients/README.md)
-for exact prerequisites, enrollment values, failure messages, and repeat setup.
+Enable **Start at login** in your Docker app and keep Tailscale connected.
 
-## Release previews
+Complete a Codex reply and confirm the new Mac's label and usage in Grafana.
+Private enrollment lives under `~/.local/share/hnet/ops/telemetry/.env.edge`.
+To enroll without prompts, put the settings in a private file and pass
+`hnetctl client-install --config /path/to/private-enrollment.env`.
 
-<!-- Versioned release packaging from VERSION, ops/apps/hnetctl/release.sh, ops/clients/release-files.txt, and ops/clients/homebrew-hnet.json -->
+## Use agents and view usage
 
-Install with `brew install yowainwright/tap/hnet`.
-Build local versioned macOS previews with:
+<!-- Agent launchers and dashboards from ops/clients/zsh and ops/telemetry/grafana/dashboards/agent-telemetry.json -->
 
-```sh
-./ops/apps/hnetctl/hnetctl --version
-./ops/apps/hnetctl/hnetctl release-bundle
-```
+After enrollment, use a new terminal:
 
-`dist/hnet-VERSION-darwin-{arm64,amd64}.tar.gz` includes the explicit client and
-central support files, MIT license, and checksums. `ops/clients/homebrew-hnet.json`
-is an unmanaged tap inventory draft. The preview workflow scans source/history
-and saves review artifacts; it does not create tags, publish releases, or update
-the tap. See [package lifecycle](ops/clients/README.md#package-lifecycle).
-
-<!-- Release commands and workflow behavior from mise.toml, ops/scripts/release.sh, .github/workflows/release.yml, and .github/workflows/update-homebrew.yml -->
-
-The release entrypoint follows pk: select a version, validate locally, confirm,
-then tag, push, and dispatch the release workflow. Use the Mise tasks:
-
-```sh
-mise run release-preview                    # Offline build and verification
-mise run release-dry-run -- v0.2.0-rc.1     # Full preflight without publishing
-mise run release                           # Interactive version picker
-mise run release -- v0.1.1                 # Explicit version; still confirms
-```
-
-Release from a clean `main` matching `origin/main`, after Linux/macOS CI passes.
-The selected tag supplies the packaged version; source `VERSION` remains the
-development fallback. Tagging does not edit or commit source files.
-
-The workflow runs from the selected tag and requires its commit to belong to
-`main`. Later commits on `main` do not change the release source or signing
-identity. If dispatch fails after pushing a tag, retry using that same tag:
-
-```sh
-gh workflow run release.yml --repo yowainwright/hnet \
-  --ref v0.2.0-rc.1 --field tag_name=v0.2.0-rc.1
-```
-
-The workflow checks the tagged source, signs checksums with GitHub OIDC/cosign,
-attests archive provenance, downloads and verifies the draft assets, and publishes
-them. Provenance verification requires the selected source commit and this
-repository's release workflow, using [GitHub's attestation action](https://github.com/actions/attest).
-Release candidates
-skip Homebrew. Stable releases call the tap's pinned reusable publisher, which
-opens a formula PR and waits for its required checks and merge. Configure the
-repository secret `HOMEBREW_TAP_TOKEN` with access limited to the tap for that
-stable-release path.
-
-Stable publication is enabled by `stable_release_ready` in
-`ops/clients/homebrew-hnet.json`. The existing `v0.1.0` preview is preserved;
-publish changes with a new tag.
-
-The first release targets macOS, Codex, Claude Code, a private local/Tailscale
-central stack, and optional Synology backups. General ChatGPT conversation
-telemetry is unverified; Kubernetes remains experimental. exe.dev is paused.
-Buffered telemetry has no enforced 24-hour expiry. Backup expiry requires
-explicit maintenance; installing this code does
-not change existing retention or start services.
-
-## Automatic setup on Macs
-
-<!-- automatic shell enrollment and startup from ops/apps/hnetctl/hnetctl, ops/clients/zsh/auto.zsh, and ops/telemetry/compose.edge.yml -->
-
-Each additional Mac needs these tools before enrollment:
-
-| Tool | Required setup |
+| Agent | Command |
 | --- | --- |
-| OrbStack or Docker Desktop | Start the local Docker engine; Docker CLI and Compose must be available. |
-| Tailscale | Sign into the same trusted tailnet as the central Mac. |
-| 1Password for Mac and 1Password CLI (`op`) | Sign in, unlock the app, and enable Settings > Developer > Integrate with 1Password CLI. |
-| Codex CLI (`codex`) | Put it on PATH; hnet uses it to validate Codex configuration, including desktop enrollment. |
-| hnet client | Use the installer above; it copies the client files into a stable installation location. |
+| Codex CLI | `codex` |
+| Codex desktop | `codex-app` |
+| Claude Code | `claude` |
 
-macOS supplies Bash, zsh, curl, Keychain's `security`, `open`, and `pgrep`.
-Git is needed if obtaining hnet through Git. Claude Code is needed only on Macs
-that will send Claude Code telemetry. Install the ChatGPT/Codex desktop app on
-Macs where desktop sessions will be used.
+Install Claude Code separately if needed. Fully quit desktop apps before starting
+them through the launcher; use the launcher for subsequent starts.
 
-Enroll each Mac once. Its edge collector forwards to the central Mac; every
-new interactive zsh session loads the shell client automatically.
+Complete a reply, then open [Agent usage and sessions](http://localhost:2021/d/agent-telemetry)
+on the central Mac. Sign in with the Grafana credentials in 1Password, select
+**Last 15 minutes**, and refresh. On other Macs, use the central Mac's Tailscale
+dashboard address.
 
-1. Configure that Mac's private edge environment and start its collector using
-   the [per-Mac setup](ops/telemetry/README.md#automatic-shell-collection).
-2. Run these commands from the hnet checkout and approve 1Password when prompted:
+Regular ChatGPT conversations are not tracked. `chatgpt-app` covers only its
+integrated Codex runtime.
 
-   ```bash
-   ./ops/apps/hnetctl/hnetctl shell-enable
-   ./ops/apps/hnetctl/hnetctl shell-status
-   ```
-
-3. Enable **Start at login** in OrbStack (or Docker Desktop), and keep Tailscale
-   connected. Existing containers use `unless-stopped`, so they resume with
-   Docker unless deliberately stopped.
-4. Open a new terminal, run `git status` in the checkout, then refresh Grafana
-   after about 15 seconds. Look for service `hnet.zsh` and the Mac's host label.
-
-`shell-enable` imports only the configured Mac's ingestion token into its local
-login Keychain. Startup reads Keychain rather than calling 1Password in every
-terminal. The token is passed through stdin during import and is never written
-into the startup file. Run `shell-enable` again after rotating that Mac's token.
-
-Each Mac has a distinct token and gateway slot, which assigns its host label.
-Keychain handles local credentials; central storage provides cross-computer
-history. This setup enables shell collection. Enable Codex separately below.
-
-See [verification, rotation, and removal](ops/telemetry/README.md#automatic-shell-collection).
-
-## Codex and Grafana
-
-<!-- Agent enrollment and launchers from ops/apps/hnetctl/hnetctl, ops/clients/codex/config.toml, ops/clients/zsh/codex.zsh, ops/clients/zsh/claude.zsh, and dashboard panels from ops/telemetry/grafana/dashboards/agent-telemetry.json -->
-
-After shell enrollment, configure Codex once on each Mac:
-
-```bash
-./ops/apps/hnetctl/hnetctl codex-enable
-```
-
-Open a new terminal. Run `codex` for the CLI, `codex-app` for Codex desktop, or
-`chatgpt-app` for ChatGPT desktop's integrated Codex. Quit an existing desktop
-process before using its launcher. Use the launcher for subsequent desktop
-starts too; it stops with a message if the app is already running. These
-launchers read the
-Mac's ingestion token from Keychain and pass authentication only to their child
-processes. Codex configuration contains loopback endpoints and content-logging
-controls; it contains no ingestion token.
-
-For Claude Code, run `claude` from a new terminal after shell enrollment. Its
-launcher enables native OTLP logs and metrics with content export disabled;
-it uses the same local Keychain item without changing Claude settings files.
-Direct commands are also available through `hnetctl codex` and `hnetctl claude`.
-
-Open [Agent usage and sessions](http://localhost:2021/d/agent-telemetry) on the
-central Mac. Sign in with the Grafana credentials in 1Password, select **Last 15
-minutes**, and refresh after a Codex session starts. Check **Recent sessions**,
-**Model calls**, **Recent agent tool activity**, and **Hosts and last seen**.
-After a completed model response, check **Usage by model**, **Input tokens**,
-**Output tokens**, **Cached input tokens**, and **Recent model usage**. These
-panels use response events, excluding repeated metric snapshots. Cached input
-is part of input; reasoning is part of output. Empty usage panels mean no usage
-event was received in the selected period.
-
-Regular ChatGPT web and desktop conversations have no verified per-model OTLP
-export in this setup. The ChatGPT launcher covers its integrated Codex runtime;
-it does not establish tracking for all ChatGPT conversations.
-
-See [Codex setup and verification](ops/telemetry/README.md#codex) for privacy
-settings, desktop restart requirements, and removal. See [Claude Code](ops/telemetry/README.md#claude-code)
-for its launch and verification steps.
+Codex enrollment preserves existing settings and refuses conflicting OTel
+configuration or symlinked startup files. Claude's launcher supplies telemetry
+settings without changing its settings file. Both use the local Keychain token.
+Token counts measure usage, not subscription charges. Cached input is part of
+input; reasoning is part of output. Do not add those subsets to totals again.
 
 ## How it works
 
-<!-- service flow derived from ops/docs/PROJECT.md and ops/telemetry/README.md -->
-
-Each Mac removes sensitive fields before locally buffering and batching events
-to the private central dashboard. Queued events can be retried after a brief
-central outage.
+<!-- Service flow from ops/apps/hnetctl/hnetctl and ops/telemetry/compose.mac-studio.yml -->
 
 ```mermaid
 flowchart LR
@@ -243,10 +173,6 @@ flowchart LR
   Filter -->|Private Tailscale| Central[Central storage]
   Central --> Dashboard[Private dashboard]
 ```
-
-See the [service flow](./ops/docs/PROJECT.md) and [telemetry operations](./ops/telemetry/README.md).
-
-The data path is explicit:
 
 <!-- customer-facing telemetry sequence derived from ops/telemetry/collector/edge.yaml and gateway.yaml -->
 
@@ -270,44 +196,176 @@ sequenceDiagram
   Store-->>Dashboard: Return dashboards and trends
 ```
 
-## What stays private
+```mermaid
+flowchart LR
+  operator[Authorized operator] --> hnetctl[hnetctl]
+  hnetctl --> edge[Edge collector]
+  hnetctl --> central[Central Compose stack]
+  source[Mac-local telemetry] --> edge
+  edge -->|Private Tailscale HTTPS| gateway[Central OTLP gateway]
+  gateway --> clickhouse[ClickHouse]
+  clickhouse --> grafana[Grafana]
+  clickhouse --> restic[Restic backups]
+```
 
-<!-- privacy guarantees derived from ops/telemetry/collector/edge.yaml and gateway.yaml -->
+## Data and privacy
 
-hnet keeps useful operational metadata. Private access and authentication are
-the primary boundary; masking sensitive values is an additional safeguard.
+<!-- Privacy and retention from ops/telemetry/collector, ops/telemetry/retention.sh, and ops/telemetry/.env.mac-studio.example -->
 
-| Source | Stored signal |
+Each Mac filters and buffers telemetry, then sends it privately over Tailscale.
+ClickHouse stores it; Grafana displays it.
+
+hnet keeps operational metadata. Allowlists exclude prompts, completions, and raw
+shell commands; log bodies and span status messages are emptied. Shell events
+keep command category, duration, exit code, and a safe project label. Agent
+events keep model, usage, session, status, and safe tool metadata.
+
+Redaction masks recognized credential assignments, bearer tokens, card-like
+numbers, and configured personal matches in retained attributes. It cannot
+detect every secret. Metadata names/descriptions, span links, and metric
+exemplars are retained without scanning. Keep access private.
+
+### Personal redaction
+
+Set `AGENT_TELEMETRY_REDACT_PATTERN` in each private central/edge config, using
+the same setting on every collector. The default `a^` adds no personal matches.
+Use literal values separated by `|`, or a 1Password reference:
+
+```dotenv
+AGENT_TELEMETRY_REDACT_PATTERN=\Qperson@example.invalid\E|\Q123 Example Street\E
+```
+
+Matching is case-sensitive; prefix with `(?i)` for case-insensitive matching.
+Arbitrary regex syntax is rejected. After changing the setting, run `hnetctl
+start` centrally and `hnetctl edge-start` on affected clients; `restart` does
+not refresh container environments.
+
+Live telemetry has a 14-day retention policy. Buffered telemetry has no enforced
+24-hour expiry. Optional encrypted Synology backups have separate retention and
+require explicit expiry maintenance.
+
+Each Mac's token is stored in login Keychain. Programs running as your user can
+access it; locking 1Password does not revoke an enrolled token.
+
+## Checks, upgrades, and removal
+
+<!-- Lifecycle and diagnostics from ops/apps/hnetctl/client.sh, ops/apps/hnetctl/hnetctl, and ops/clients/zsh/auto.zsh -->
+
+| Check | Command |
 | --- | --- |
-| Shell | Command category, duration, exit code, safe project label, host identity, timestamp |
-| Dotfiles | Setup event name, package name, package manager, tool name, tool version, duration, status, success flag, host identity, timestamp |
-| Agents | Service, model, operation, token counts, session ID, status, safe tool name, duration, app version, host identity, timestamp |
+| Client prerequisites | `hnetctl client-check --prerequisites` |
+| Enrollment and connectivity | `hnetctl client-check --connection` |
+| Edge collector | `hnetctl edge-status` or `hnetctl edge-logs` |
+| Central services | `hnetctl status` |
+| Central logs | `hnetctl logs clickhouse`, `collector`, or `grafana` |
 
-Collection scope is unchanged: attribute allowlists still apply, and log bodies
-and span status messages are emptied.
-Model names, scope metadata, metric names/units/descriptions, links, and exemplars
-are retained.
+Connection checks send empty probes; a completed agent reply visible in Grafana
+proves usage delivery. If no data arrives, check Docker, Tailscale, slot/port
+pairing, Keychain access, and Grafana's time range. Unlock Keychain and open a
+new terminal if startup skipped collection. Keep logs private.
 
-Both collectors mask recognized credential assignments, bearer tokens,
-13-19 digit card-like values (including spaces or hyphens), and configured
-personal matches in retained attributes. Numeric attribute values are checked
-too. Configure your email, address, and other known values privately as described
-in [Telemetry](ops/telemetry/README.md#personal-matches).
+Upgrade with `brew update` and `brew upgrade hnet`. Open new terminals and
+fully relaunch desktop agents. Running collectors keep their mounted
+configuration until explicitly recreated; review release notes before rollout.
 
-This is pattern matching, not a guarantee of detecting every secret. Scalar
-metadata (such as names and descriptions), span links, and metric exemplars are
-not scanned. Unknown credentials and unlisted personal information can remain;
-long numeric identifiers can match the card pattern. Transform errors drop the
-affected payload. The gateway assigns host labels from each authenticated Mac's
-receiver.
+For token rotation, update the matching central and edge credentials, run
+`hnetctl start` centrally and `hnetctl edge-start` on that client, then
+`hnetctl shell-enable`. Open new terminals, relaunch agents, and verify the old
+token is rejected. Existing processes retain previously loaded credentials.
 
-## Access and retention
+`brew uninstall hnet` preserves private settings, queues, backups, and Keychain
+credentials. When retiring a Mac, revoke its token centrally and stop its
+collector. Remove the marked hnet blocks from zsh startup and Codex config if
+removing those integrations. Keychain removal and private-data deletion are
+separate actions; do not delete volumes to troubleshoot.
 
-<!-- access and retention boundaries derived from ops/telemetry/README.md and compose files -->
+## Synology backups
 
-Dashboards and ingestion stay private behind Tailscale; there is no public
-internet endpoint. Live telemetry is retained for 14 days. Optional Restic
-archives provide encrypted NAS or cloud backups with separate retention.
+<!-- Backup and retention commands from ops/apps/hnetctl/hnetctl and ops/telemetry/.env.restic.nas.example -->
 
-Credentials, private host details, and raw telemetry do not belong in this
-repository.
+On the central Mac, install Restic and create a private backup profile:
+
+```sh
+brew install restic
+state="${HNET_CLIENT_HOME:-$HOME/.local/share/hnet}/ops/telemetry"
+test -e "$state/.env.restic.nas" || cp \
+  "$(brew --prefix hnet)/share/hnet/ops/telemetry/.env.restic.nas.example" \
+  "$state/.env.restic.nas"
+chmod 600 "$state/.env.restic.nas"
+open -e "$state/.env.restic.nas"
+```
+
+Set `RESTIC_REPOSITORY` to the Synology SFTP destination and `RESTIC_PASSWORD`
+to its 1Password reference. Configure SSH access to that destination. Keep the
+encryption password available for recovery independently of the central Mac.
+
+```sh
+hnetctl restic-init nas   # Once, for a new repository
+hnetctl archive nas      # Create and encrypt a database backup
+hnetctl retention nas    # Preview expired snapshots; deletes nothing
+```
+
+`BACKUP_RETENTION_DAYS` defaults to 30. After testing a restore and reviewing
+the preview, `hnetctl retention nas --apply` deletes selected snapshots and
+prunes unused data. No schedule is installed. Local backup staging remains;
+snapshot age does not bound the age of telemetry inside it.
+
+## Archive installs and source use
+
+<!-- Portable installation and source operations from install.sh and ops/apps/hnetctl/hnetctl -->
+
+To transfer an unpublished client from a checkout, run
+`./ops/apps/hnetctl/hnetctl client-bundle`. Transfer the archive and checksum
+from `dist/` to the new Mac, then:
+
+```sh
+shasum -a 256 -c hnet-client-macos.tar.gz.sha256
+tar -xzf hnet-client-macos.tar.gz
+cd hnet-client
+./install.sh --install-deps
+```
+
+Complete sign-ins and rerun `./install.sh`. It performs the same enrollment as
+Homebrew. `--prefix /absolute/directory` selects a custom location. Repeating
+enrollment preserves existing settings; unmanaged files or conflicting
+configuration stop setup rather than being overwritten.
+
+From a checkout, use `./ops/apps/hnetctl/hnetctl` instead of the packaged
+`hnetctl`. Private central and edge configs live in `ops/telemetry/`; copy the
+corresponding `.env.*.example` first. For manual collection on the central Mac,
+configure `.env.edge` with its `mac-studio` slot, then run `edge-start`,
+`shell-enable`, and `codex-enable`. The checkout must remain available.
+
+Kubernetes support is experimental and requires a checkout. The chart is in
+`ops/telemetry/`; use `cluster-lint`, `cluster-template`,
+`cluster-secrets`, `cluster-install`, and `cluster-status` through hnetctl.
+Set `HNET_KUBE_SECRET` consistently when choosing a custom Secret name.
+Services remain private; client enrollment does not add Kubernetes worker nodes.
+exe.dev deployment is paused.
+
+## Development and releases
+
+<!-- Release tasks from mise.toml and ops/scripts/release.sh -->
+
+From a checkout with Mise configured:
+
+```sh
+mise run check
+mise run release-preview
+mise run release:patch:dry-run
+mise run release:patch
+```
+
+Use `release:minor` or `release:major` for larger bumps; each has a
+`:dry-run` task. Bumps use the latest stable tag and skip release candidates.
+`mise run release` keeps the interactive picker; pass `-- vX.Y.Z` for an exact version.
+
+Release from clean `main` matching `origin/main`, after Linux and macOS CI pass.
+The release command selects a version, confirms, tags, and starts signed GitHub
+publication. Stable releases update the Homebrew tap automatically and require
+`HOMEBREW_TAP_TOKEN`; release candidates skip the tap.
+
+For full operations validation, run `tests/ops/apps/hnetctl/hnetctl_test.sh`
+and `./ops/scripts/validate.sh`. Collector validation uses disposable,
+network-disabled containers. Keep credentials, private host details, telemetry,
+queues, and backups out of Git.

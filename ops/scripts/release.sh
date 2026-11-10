@@ -12,7 +12,7 @@ release_entry() {
 release_main() {
   release_parse "$@" || return
   if [[ $mode == help ]]; then
-    echo 'Usage: release.sh [--preview|--dry-run|--publish] [v0.x.y[-rc.N]]'
+    echo 'Usage: release.sh [--preview|--dry-run|--publish] [--patch|--minor|--major|vX.Y.Z[-rc.N]]'
     return
   fi
   release_prepare || return
@@ -43,6 +43,7 @@ release_prepare() {
 release_parse() {
   mode=publish
   tag=''
+  bump=''
   while [[ $# -gt 0 ]]; do
     release_parse_option "$1" || return
     shift
@@ -56,15 +57,24 @@ release_parse_option() {
   --dry-run) mode=dry-run ;;
   --publish) mode=publish ;;
   --help) mode=help ;;
+  --patch | --minor | --major) release_set_bump "${1#--}" ;;
   v*)
-    [[ -z $tag ]] || {
-      release_fail 'Specify one version.'
+    [[ -z $tag && -z $bump ]] || {
+      release_fail 'Specify one version or bump.'
       return
     }
     tag=${1:?}
     ;;
-  *) release_fail 'Usage: release.sh [--preview|--dry-run|--publish] [v0.x.y[-rc.N]]' ;;
+  *) release_fail 'Expected --patch, --minor, --major, or a v-prefixed semantic version.' ;;
   esac
+}
+
+release_set_bump() {
+  [[ -z $tag && -z $bump ]] || {
+    release_fail 'Specify one version or bump.'
+    return
+  }
+  bump=${1:?}
 }
 
 release_preflight() {
@@ -99,12 +109,38 @@ release_require_clean_main() {
 
 release_select() {
   [[ -z $tag ]] || return 0
+  if [[ -n ${bump:-} ]]; then
+    release_select_bump
+    return
+  fi
   if [[ $mode == preview ]]; then
     tag="v$(<VERSION)"
     return
   fi
+  release_select_interactive
+}
+
+release_select_bump() {
+  local current
+  current=$(git -c versionsort.suffix=- tag --list 'v*' --sort=-version:refname |
+    sed -nE '/^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/ {p;q;}') || return
+  tag=$(release_next_version "${current:-v0.0.0}" "$bump")
+}
+
+release_next_version() {
+  local current=${1:?} kind=${2:?} major minor patch
+  IFS=. read -r major minor patch <<<"${current#v}"
+  case "$kind" in
+  patch) printf 'v%s.%s.%s' "$major" "$minor" "$((patch + 1))" ;;
+  minor) printf 'v%s.%s.0' "$major" "$((minor + 1))" ;;
+  major) printf 'v%s.0.0' "$((major + 1))" ;;
+  *) release_fail 'Unknown version bump.' ;;
+  esac
+}
+
+release_select_interactive() {
   local current candidate
-  current=$(git -c versionsort.suffix=- tag --list 'v0.*' --sort=-version:refname | sed -n '1p') || return
+  current=$(git -c versionsort.suffix=- tag --list 'v*' --sort=-version:refname | sed -n '1p') || return
   current=${current:-v0.0.0}
   candidate=$(release_candidate "$current") || return
   printf 'Current: %s\n1) %s (recommended)\n2) custom version\n' "$current" "$candidate"
@@ -117,23 +153,23 @@ release_prompt_choice() {
   read -r -p 'Choose a version [1]: ' choice || return
   case "${choice:-1}" in
   1) tag=$candidate ;;
-  2) read -r -p 'Version (v0.x.y or v0.x.y-rc.N): ' tag ;;
+  2) read -r -p 'Version (vX.Y.Z or vX.Y.Z-rc.N): ' tag ;;
   *) release_fail 'Unknown version choice.' ;;
   esac
 }
 
 release_candidate() {
-  local current=${1:?} core minor _patch suffix
+  local current=${1:?} core major minor _patch suffix
   core=${current#v}
   core=${core%%-*}
-  IFS=. read -r _ minor _patch <<<"$core"
+  IFS=. read -r major minor _patch <<<"$core"
   case "$current" in
   *-rc.*)
     suffix=${current##*-rc.}
     [[ $suffix =~ ^(0|[1-9][0-9]*)$ ]] || return 1
     printf 'v%s-rc.%s' "$core" "$((suffix + 1))"
     ;;
-  *) printf 'v0.%s.0-rc.1' "$((minor + 1))" ;;
+  *) printf 'v%s.%s.0-rc.1' "$major" "$((minor + 1))" ;;
   esac
 }
 
@@ -250,8 +286,8 @@ release_source_revision() {
 }
 
 release_validate_tag() {
-  local pattern='^v0\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
-  [[ ${1:?} =~ $pattern ]] || release_fail 'Expected a v-prefixed v0 semantic version.'
+  local pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+  [[ ${1:?} =~ $pattern ]] || release_fail 'Expected a v-prefixed semantic version.'
 }
 
 release_fail() {
