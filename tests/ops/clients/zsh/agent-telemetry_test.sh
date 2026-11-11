@@ -2,11 +2,8 @@
 
 set -Eeuo pipefail
 
-script_path=${BASH_SOURCE[0]}
-script_parent=${script_path%/*}
-script_dir=$(cd -- "$script_parent" && pwd)
 # shellcheck source=tests/ops/test_support.sh
-source "$script_dir/../../test_support.sh"
+source "${BASH_SOURCE[0]%/*}/../../test_support.sh"
 
 test_zsh_records_have_current_timestamps() {
   zsh -f -c '

@@ -14,13 +14,6 @@ cleanup() {
   rm -rf "$test_root"
 }
 
-trap cleanup EXIT
-
-fail() {
-  echo "$1" >&2
-  exit 1
-}
-
 assert_contains() {
   local haystack=$1 needle=$2
   [[ $haystack == *"$needle"* ]] || fail "Expected output to contain: $needle"
@@ -28,6 +21,11 @@ assert_contains() {
 
 assert_file() {
   [[ -f $1 ]] || fail "Expected file: $1"
+}
+
+fail() {
+  echo "$1" >&2
+  exit 1
 }
 
 make_fake_tools() {
@@ -122,3 +120,5 @@ TOOL
     "$fake_bin/orbctl" "$fake_bin/k9s" "$fake_bin/mprocs" \
     "$fake_bin/curl" "$fake_bin/tailscale"
 }
+
+trap cleanup EXIT

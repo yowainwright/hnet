@@ -33,6 +33,7 @@ spec:
           imagePullPolicy: {{ .Values.imagePullPolicy }}
           args:
             - --config=/etc/otelcol-contrib/config.yaml
+            - --config=env:HNET_CLIENTS_CONFIG
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -40,6 +41,15 @@ spec:
               drop:
                 - ALL
           env:
+            - name: HNET_CLIENTS_CONFIG
+              value: {{ include "hnet-telemetry.clientConfig" . | quote }}
+            {{- range $client := (include "hnet-telemetry.clients" . | fromJsonArray) }}
+            - name: {{ $client.tokenEnv }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "hnet-telemetry.secretName" $ }}
+                  key: {{ $client.tokenKey }}
+            {{- end }}
             - name: AGENT_TELEMETRY_REDACT_PATTERN
               valueFrom:
                 secretKeyRef:
@@ -55,28 +65,11 @@ spec:
                   key: {{ .Values.secret.keys.clickhousePassword }}
             - name: TELEMETRY_TTL
               value: {{ .Values.telemetry.ttl | quote }}
-            - name: AGENT_TELEMETRY_MAC_STUDIO_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "hnet-telemetry.secretName" . }}
-                  key: {{ .Values.secret.keys.macStudioToken }}
-            - name: AGENT_TELEMETRY_MAC_MINI_1_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "hnet-telemetry.secretName" . }}
-                  key: {{ .Values.secret.keys.macMini1Token }}
-            - name: AGENT_TELEMETRY_MAC_MINI_2_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "hnet-telemetry.secretName" . }}
-                  key: {{ .Values.secret.keys.macMini2Token }}
           ports:
-            - name: mac-studio-http
-              containerPort: 4318
-            - name: mac-mini-1-http
-              containerPort: 4319
-            - name: mac-mini-2-http
-              containerPort: 4320
+            {{- range $client := (include "hnet-telemetry.clients" . | fromJsonArray) }}
+            - name: client-{{ int $client.port }}
+              containerPort: {{ int $client.port }}
+            {{- end }}
             - name: health
               containerPort: 13133
           readinessProbe:

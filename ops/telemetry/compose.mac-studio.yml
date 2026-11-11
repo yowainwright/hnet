@@ -50,6 +50,7 @@ services:
     restart: unless-stopped
     command:
       - --config=/etc/otelcol-contrib/config.yaml
+      - --config=env:HNET_CLIENTS_CONFIG
     read_only: true
     cap_drop:
       - ALL
@@ -58,15 +59,8 @@ services:
     environment:
       - CLICKHOUSE_USER=otel_collector
       - CLICKHOUSE_PASSWORD
-      - AGENT_TELEMETRY_MAC_STUDIO_TOKEN
-      - AGENT_TELEMETRY_MAC_MINI_1_TOKEN
-      - AGENT_TELEMETRY_MAC_MINI_2_TOKEN
       - TELEMETRY_TTL
       - AGENT_TELEMETRY_REDACT_PATTERN=${AGENT_TELEMETRY_REDACT_PATTERN:-a^}
-    ports:
-      - "127.0.0.1:${GATEWAY_PORT:-14318}:4318"
-      - "127.0.0.1:${GATEWAY_PORT_MAC_MINI_1:-14319}:4319"
-      - "127.0.0.1:${GATEWAY_PORT_MAC_MINI_2:-14320}:4320"
     volumes:
       - ${HNET_TELEMETRY_RESOURCES:-.}/collector/gateway.yaml:/etc/otelcol-contrib/config.yaml:ro
       - collector-data:/var/lib/otelcol

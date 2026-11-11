@@ -2,11 +2,8 @@
 
 set -euo pipefail
 
-script_path=${BASH_SOURCE[0]}
-script_parent=${script_path%/*}
-script_dir=$(cd -- "$script_parent" && pwd)
 # shellcheck source=tests/ops/test_support.sh
-source "$script_dir/../test_support.sh"
+source "${BASH_SOURCE[0]%/*}/../test_support.sh"
 
 test_validate_wiring() {
   local fake_bin="$test_root/bin"
@@ -45,6 +42,17 @@ test_validate_wiring() {
   assert_contains "$(<"$helm_log")" 'template'
 }
 
+test_validate_rejects_invalid_collector_config() {
+  local docker_log="$test_root/invalid-collector.log" result=0
+  write_validation_docker
+  PATH="$test_root/bin:$PATH" OPS_TEST_DOCKER_LOG="$docker_log" \
+    OPS_TEST_COLLECTOR_EXIT_CODE=7 \
+    "$repo_dir/ops/scripts/validate.sh" --collectors >/dev/null 2>&1 || result=$?
+  [[ $result -eq 7 ]] || fail "Collector configuration failure was not propagated."
+  assert_contains "$(<"$docker_log")" 'collector/gateway.yaml'
+  [[ $(<"$docker_log") != *collector/edge.yaml* ]] || fail "Validation continued after a collector failure."
+}
+
 write_validation_docker() {
   cat >"$test_root/bin/docker" <<'TOOL'
 #!/usr/bin/env bash
@@ -55,17 +63,6 @@ for arg in "$@"; do
 done
 TOOL
   chmod +x "$test_root/bin/docker"
-}
-
-test_validate_rejects_invalid_collector_config() {
-  local docker_log="$test_root/invalid-collector.log" result=0
-  write_validation_docker
-  PATH="$test_root/bin:$PATH" OPS_TEST_DOCKER_LOG="$docker_log" \
-    OPS_TEST_COLLECTOR_EXIT_CODE=7 \
-    "$repo_dir/ops/scripts/validate.sh" --collectors >/dev/null 2>&1 || result=$?
-  [[ $result -eq 7 ]] || fail "Collector configuration failure was not propagated."
-  assert_contains "$(<"$docker_log")" 'collector/gateway.yaml'
-  [[ $(<"$docker_log") != *collector/edge.yaml* ]] || fail "Validation continued after a collector failure."
 }
 
 make_fake_tools

@@ -9,6 +9,9 @@ backups/
 ops/telemetry/backups/
 ops/telemetry/data/
 ops/telemetry/queues/
+ops/telemetry/clients.json
+ops/telemetry/clients.json.*
+ops/telemetry/enrollments/
 
 node_modules/
 dist/

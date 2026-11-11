@@ -1,0 +1,9 @@
+[
+  {
+    "name": "central",
+    "central": true,
+    "port": 4318,
+    "hostPort": 14318,
+    "tokenRef": "op://YOUR_VAULT/agent-telemetry/central-token"
+  }
+]

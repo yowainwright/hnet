@@ -13,6 +13,9 @@ mprocs = "0.9.6"
 restic = "0.19.1"
 shellcheck = "0.11.0"
 shfmt = "3.14.0"
+"github:yowainwright/fs-lint" = "0.3.0"
+"github:yowainwright/src-lint" = "0.2.0"
+"github:yowainwright/struct-lint" = "0.1.0"
 
 # OrbStack supplies Docker, Compose, and orbctl on the supported Mac hosts.
 # Linux CI runners supply Docker and Compose; zsh is their extra OS package.
@@ -23,8 +26,12 @@ shfmt = "3.14.0"
 "brew-cask:tailscale-app" = { version = "latest", os = "macos", adopt = true }
 
 [tasks.lint]
-description = "Check shell syntax and formatting"
-run = "./ops/scripts/lint.sh --strict"
+description = "Check shell syntax, formatting, paths, imports, and declaration order"
+run = ["./ops/scripts/lint.sh --strict", "./ops/scripts/lint-structure.sh"]
+
+[tasks."lint:structure"]
+description = "Check repository paths and supported source structure"
+run = "./ops/scripts/lint-structure.sh"
 
 [tasks.security]
 description = "Scan local history and publication inputs"

@@ -290,7 +290,7 @@ client_prepare_settings() {
 
 client_prompt_settings() {
   [[ -t 0 ]] || fail "Provide --config FILE for noninteractive enrollment. See README.md."
-  echo "Use mac-studio on the central host; use an unused mac-mini-1 or mac-mini-2 slot on another Mac."
+  echo "Use the name, central HTTPS URL, and token reference registered by hnetctl client-add."
   read -r -p 'Mac label: ' client_host
   read -r -s -p 'Central Tailscale HTTPS URL including assigned port (hidden): ' client_upstream
   printf '\n'
@@ -329,17 +329,21 @@ client_require_managed_prefix() {
 }
 
 client_require_central_prefix() {
-  [[ -n ${HNET_PACKAGE_ROOT:-} && $client_host == mac-studio ]] ||
+  [[ -n ${HNET_PACKAGE_ROOT:-} ]] ||
     fail "Install location already contains unmanaged files; choose another --prefix."
   local studio_env="$client_prefix/ops/telemetry/.env.mac-studio"
+  local telemetry_dir="${studio_env%/*}"
   client_reject_symlinks "$studio_env"
   client_reject_symlinks "$client_prefix/ops/clients"
   [[ -f $studio_env && ! -e "$client_prefix/ops/clients" ]] ||
     fail "Central enrollment requires a regular central configuration and no existing client code."
   load_studio_config public
   validate_studio_public_config
-  [[ $client_upstream == "https://$TAILSCALE_DNS_NAME:4318" ]] ||
-    fail "Central enrollment must use this host's Tailscale address and mac-studio slot."
+  local port
+  port=$(jq -er --arg name "$client_host" '.[] | select(.central == true and .name == $name) | .port' <<<"${clients_json:?}") ||
+    fail "Only the designated central client can adopt central state."
+  [[ $client_upstream == "https://$TAILSCALE_DNS_NAME:$port" ]] ||
+    fail "Central enrollment must use this host's registered Tailscale endpoint."
 }
 
 client_check_existing_codex() {
@@ -496,6 +500,7 @@ client_check_connections() {
   echo "OK: local and central collectors accept authenticated empty OTLP requests."
   echo "A completed Codex turn visible in Grafana proves usage delivery."
 }
+
 client_docker_is_local() {
   local endpoint
   [[ ${DOCKER_HOST:-unix://local} == unix://* ]] || return 1
@@ -540,6 +545,7 @@ client_reject_symlinks() {
     [[ -n $target ]] || return 0
   done
 }
+
 client_read_settings() {
   local key value seen='|'
   while client_read_setting_line; do
@@ -566,18 +572,11 @@ client_assign_setting() {
   AGENT_TELEMETRY_REDACT_PATTERN) client_pattern=${2:-a^} ;;
   esac
 }
+
 client_validate_destination() {
-  local expected_port
   AGENT_TELEMETRY_UPSTREAM=$client_upstream
   AGENT_TELEMETRY_HOST=$client_host
   validate_edge_destination
-  case "$client_host" in
-  mac-studio) expected_port=4318 ;;
-  mac-mini-1) expected_port=4319 ;;
-  mac-mini-2) expected_port=4320 ;;
-  *) fail "Use an existing central host slot; additional slots need central configuration first." ;;
-  esac
-  [[ $client_upstream == *":$expected_port" ]] || fail "The host slot and upstream port do not match."
   [[ $client_token_ref == op://*/*/* ]] || fail "Use a 1Password op:// reference, not a resolved token."
   client_single_line "$client_token_ref"
   client_single_line "$client_pattern"

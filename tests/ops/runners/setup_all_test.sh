@@ -2,11 +2,20 @@
 
 set -euo pipefail
 
-script_path=${BASH_SOURCE[0]}
-script_dir=$(cd -- "${script_path%/*}" && pwd)
-repo_dir=$(cd -- "$script_dir/../../.." && pwd)
 # shellcheck source=tests/ops/test_support.sh
-source "$script_dir/../test_support.sh"
+source "${BASH_SOURCE[0]%/*}/../test_support.sh"
+
+test_setup_all_dry_run() {
+  local fake_bin output runner_root
+  fake_bin=$(make_setup_all_fakes)
+  runner_root="$HOME/.hnet-test-runners-all-$$"
+  output=$(PATH="$fake_bin:$PATH" HNET_RUNNER_ROOT="$runner_root" \
+    "$repo_dir/ops/runners/setup-all.sh" --account yowainwright --dry-run)
+  assert_contains "$output" 'Setting up runner 1: yowainwright/hnet'
+  assert_contains "$output" 'Setting up runner 2: yowainwright/private-tools'
+  assert_contains "$output" 'Prepared 2 private-repository runner(s).'
+  [[ ! -e $runner_root ]] || fail 'Dry run created runner files.'
+}
 
 make_setup_all_fakes() {
   local fake_bin="$test_root/setup-all-bin"
@@ -35,18 +44,6 @@ exit 0
 TOOL
   chmod +x "$fake_bin/uname" "$fake_bin/gh" "$fake_bin/launchctl"
   printf '%s\n' "$fake_bin"
-}
-
-test_setup_all_dry_run() {
-  local fake_bin output runner_root
-  fake_bin=$(make_setup_all_fakes)
-  runner_root="$HOME/.hnet-test-runners-all-$$"
-  output=$(PATH="$fake_bin:$PATH" HNET_RUNNER_ROOT="$runner_root" \
-    "$repo_dir/ops/runners/setup-all.sh" --account yowainwright --dry-run)
-  assert_contains "$output" 'Setting up runner 1: yowainwright/hnet'
-  assert_contains "$output" 'Setting up runner 2: yowainwright/private-tools'
-  assert_contains "$output" 'Prepared 2 private-repository runner(s).'
-  [[ ! -e $runner_root ]] || fail 'Dry run created runner files.'
 }
 
 test_help() {

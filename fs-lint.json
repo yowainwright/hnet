@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "newFiles": {
+    "default": "deny",
+    "allow": [
+      "{AGENTS.md,README.md,LICENSE,VERSION,install.sh,mise.toml,fs-lint.json,.src-lintrc,.editorconfig,.gitignore,.gitleaks.toml}",
+      ".agents/skills/**/*.md",
+      ".github/**/*.{md,yml,yaml,sh}",
+      ".github/CODEOWNERS",
+      "ops/apps/*/*.sh",
+      "ops/apps/hnetctl/hnetctl",
+      "ops/{scripts,runners}/*.sh",
+      "ops/mprocs/*.yaml",
+      "ops/clients/*.{sh,txt,json}",
+      "ops/clients/Brewfile",
+      "ops/clients/codex/*.toml",
+      "ops/clients/zsh/*.zsh",
+      "ops/telemetry/{Chart.yaml,values.yaml,.helmignore,*.sh,*.jq,compose.*.yml,.env.*.example,clients.example.json}",
+      "ops/telemetry/collector/{gateway.yaml,edge.yaml,clients.jq}",
+      "ops/telemetry/clickhouse/*.{sh,xml,sql}",
+      "ops/telemetry/grafana/**/*.{yaml,json}",
+      "ops/telemetry/templates/**/*.{yaml,tpl}",
+      "tests/ops/**/*.{sh,jq,json,sql}"
+    ]
+  }
+}

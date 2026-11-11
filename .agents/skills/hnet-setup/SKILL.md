@@ -19,10 +19,12 @@ this skill guides their use.
    effect and check that the user authorized that operation. Central Compose
    startup uses `start` and private forwarding uses `serve`. `up` also starts
    experimental Kubernetes and is not the default setup path.
-4. Follow the README for enrollment. Each Mac needs its own slot and token
-   reference. Central hosts collecting local telemetry use the `mac-studio`
-   slot with their own Tailscale address. Preserve existing configuration,
-   backups, and volumes; stop on conflicting settings rather than replacing them.
+4. Follow the README for enrollment. Register arbitrary safe names with
+   `hnetctl client-add NAME` on the central host, then transfer its private
+   enrollment file to the edge Mac. Central hosts collecting locally use the
+   inventory entry marked `central: true`. Existing installations retain their
+   imported labels, ports, and credentials. Preserve configuration, backups,
+   and volumes; stop on conflicts rather than replacing them.
 5. Verify `client-check --connection`, then have the user complete an agent
    reply and confirm that Mac's label, model, and tokens in Grafana. Empty
    connection probes prove connectivity, not model-usage delivery. Do not send

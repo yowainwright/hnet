@@ -34,7 +34,7 @@ jobs:
         run: mise bootstrap --only packages --update --yes
 
       - name: Run lint
-        run: ./ops/scripts/lint.sh --strict
+        run: mise run lint
 
       - name: Scan source and local history
         run: ops/scripts/secret-scan.sh
@@ -82,6 +82,7 @@ jobs:
           cache: false
       - name: Validate native client behavior with synthetic credentials
         run: |
+          tests/ops/apps/hnetctl/clients_test.sh
           tests/ops/clients/client_test.sh
           tests/ops/clients/zsh/startup_test.sh
           tests/ops/clients/zsh/desktop_launch_test.sh

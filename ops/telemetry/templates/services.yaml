@@ -30,9 +30,11 @@ spec:
   clusterIP: None
   publishNotReadyAddresses: true
   ports:
-    - name: otlp-http
-      port: 4318
-      targetPort: mac-studio-http
+    {{- range $client := (include "hnet-telemetry.clients" . | fromJsonArray) }}
+    - name: client-{{ int $client.port }}
+      port: {{ int $client.port }}
+      targetPort: client-{{ int $client.port }}
+    {{- end }}
     - name: health
       port: 13133
       targetPort: health
@@ -50,15 +52,11 @@ metadata:
 spec:
   type: {{ .Values.gateway.service.type }}
   ports:
-    - name: mac-studio-http
-      port: {{ .Values.gateway.service.port }}
-      targetPort: mac-studio-http
-    - name: mac-mini-1-http
-      port: {{ .Values.gateway.service.macMini1Port }}
-      targetPort: mac-mini-1-http
-    - name: mac-mini-2-http
-      port: {{ .Values.gateway.service.macMini2Port }}
-      targetPort: mac-mini-2-http
+    {{- range $client := (include "hnet-telemetry.clients" . | fromJsonArray) }}
+    - name: client-{{ int $client.port }}
+      port: {{ int $client.port }}
+      targetPort: client-{{ int $client.port }}
+    {{- end }}
   selector:
     {{- include "hnet-telemetry.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: collector
