@@ -17,26 +17,30 @@ case "${1:-}" in
   ;;
 esac
 
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"
+}
+
+collect_shell_files() {
+  local shell_file
+  shell_files=()
+  while IFS= read -r shell_file; do
+    shell_files+=("$shell_file")
+  done < <(find ops tests -type f -name '*.sh' -print | sort)
+  shell_files+=(ops/apps/hnetctl/hnetctl install.sh)
+  [[ ${#shell_files[@]} -gt 0 ]] || fail 'No shell files found.'
+}
+
 fail() {
   echo "$1" >&2
   exit "${2:-1}"
-}
-
-require_command() {
-  command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"
 }
 
 cd "$repo_dir"
 require_command shellcheck
 require_command zsh
 
-shell_files=()
-while IFS= read -r shell_file; do
-  shell_files+=("$shell_file")
-done < <(find ops tests -type f -name '*.sh' -print | sort)
-shell_files+=(ops/apps/hnetctl/hnetctl install.sh)
-
-[[ ${#shell_files[@]} -gt 0 ]] || fail 'No shell files found.'
+collect_shell_files
 
 shellcheck -x "${shell_files[@]}"
 zsh -n ops/clients/zsh/*.zsh

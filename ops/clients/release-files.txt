@@ -3,6 +3,7 @@ VERSION
 install.sh
 ops/apps/hnetctl/hnetctl
 ops/apps/hnetctl/client.sh
+ops/apps/hnetctl/clients.sh
 ops/apps/hnetctl/release.sh
 ops/clients/Brewfile
 README.md
@@ -26,6 +27,8 @@ ops/telemetry/compose.edge.yml
 ops/telemetry/compose.mac-studio.yml
 ops/telemetry/collector/edge.yaml
 ops/telemetry/collector/gateway.yaml
+ops/telemetry/collector/clients.jq
+ops/telemetry/clients.example.json
 ops/telemetry/clickhouse/backups.xml
 ops/telemetry/clickhouse/users.xml
 ops/telemetry/clickhouse/create-dashboard-views.sh

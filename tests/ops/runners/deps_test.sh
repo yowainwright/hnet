@@ -2,10 +2,8 @@
 
 set -euo pipefail
 
-script_path=${BASH_SOURCE[0]}
-script_dir=$(cd -- "${script_path%/*}" && pwd)
 # shellcheck source=tests/ops/test_support.sh
-source "$script_dir/../test_support.sh"
+source "${BASH_SOURCE[0]%/*}/../test_support.sh"
 
 make_dependency_fakes() {
   mkdir -p "$test_root/bin"

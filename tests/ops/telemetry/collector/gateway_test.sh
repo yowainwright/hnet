@@ -2,24 +2,22 @@
 
 set -euo pipefail
 
-config_file=ops/telemetry/collector/gateway.yaml
+main() {
+  config=$(jq 'map(. + {tokenEnv: ("HNET_CLIENT_TOKEN_" + (.port | tostring))})' ops/telemetry/clients.example.json |
+    jq -f ops/telemetry/collector/clients.jq)
+  jq -e '.receivers["otlp/client_4318"].protocols.http.auth.authenticator == "bearertokenauth/client_4318"' <<<"$config" >/dev/null ||
+    fail "Generated receiver does not bind its authenticator."
+  jq -e '.processors["resource/client_4318"].attributes[0] == {key: "host.name", action: "upsert", value: "central"}' <<<"$config" >/dev/null ||
+    fail "Generated receiver does not overwrite host identity."
+  jq -e 'all(.service.pipelines[]; .processors == ["memory_limiter", "transform/privacy", "redaction/sensitive", "resource/client_4318", "resource/pipeline"])' <<<"$config" >/dev/null ||
+    fail "Generated signals bypass existing privacy processors."
+
+  echo "gateway collector security tests passed."
+}
 
 fail() {
   echo "$1" >&2
   exit 1
 }
 
-for token_name in mac_studio mac_mini_1 mac_mini_2; do
-  grep -Fq "bearertokenauth/$token_name" "$config_file" || fail "Gateway token is missing for $token_name."
-done
-for host_name in mac-studio mac-mini-1 mac-mini-2; do
-  grep -Fq "value: $host_name" "$config_file" || fail "Gateway host binding is missing for $host_name."
-done
-for port in 4318 4319 4320; do
-  grep -Fq "endpoint: 0.0.0.0:$port" "$config_file" || fail "Gateway receiver port $port is missing."
-done
-if grep -Fq 'action: insert' "$config_file"; then
-  fail "Gateway must overwrite host identity with the authenticated producer binding."
-fi
-
-echo "gateway collector security tests passed."
+main

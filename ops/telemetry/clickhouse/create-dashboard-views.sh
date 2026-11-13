@@ -13,6 +13,7 @@ readonly client=(
 
 readonly required_tables=(otel_logs otel_traces otel_metrics_histogram)
 readonly max_attempts=150
+attempt=0
 
 tables_exist() {
   local table
@@ -21,7 +22,6 @@ tables_exist() {
   done
 }
 
-attempt=0
 until tables_exist; do
   attempt=$((attempt + 1))
   if ((attempt % 30 == 0)); then

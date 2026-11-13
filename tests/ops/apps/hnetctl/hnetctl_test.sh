@@ -2,62 +2,28 @@
 
 set -euo pipefail
 
-script_path=${BASH_SOURCE[0]}
-script_parent=${script_path%/*}
-script_dir=$(cd -- "$script_parent" && pwd)
 # shellcheck source=tests/ops/test_support.sh
-source "$script_dir/../../test_support.sh"
+source "${BASH_SOURCE[0]%/*}/../../test_support.sh"
 # shellcheck source=tests/ops/constants.sh
 source "$repo_dir/tests/ops/constants.sh"
 
-hnetctl_source=$(sed '/^case "${1:-}"/,$d' "$repo_dir/ops/apps/hnetctl/hnetctl")
+hnetctl_source=$(sed '/^main "$@"$/,$d' "$repo_dir/ops/apps/hnetctl/hnetctl")
+hnetctl_source+=$'\ninitialize_runtime\nsource "$app_dir/clients.sh"'
+export HNET_CLIENTS_FILE="$test_root/no-inventory.json"
 
-write_studio_env() {
-  local studio_env=$1
-  cat >"$studio_env" <<EOF
-GATEWAY_PORT=$TEST_GATEWAY_PORT
-GATEWAY_PORT_MAC_MINI_1=$TEST_GATEWAY_PORT_MAC_MINI_1
-GATEWAY_PORT_MAC_MINI_2=$TEST_GATEWAY_PORT_MAC_MINI_2
-GRAFANA_PORT=$TEST_GRAFANA_PORT
-TAILSCALE_DNS_NAME=$TEST_TAILSCALE_DNS_NAME
-GF_SECURITY_ADMIN_USER=$TEST_GF_SECURITY_ADMIN_USER
-GF_SECURITY_ADMIN_PASSWORD=$TEST_GF_SECURITY_ADMIN_PASSWORD
-CLICKHOUSE_PASSWORD=$TEST_CLICKHOUSE_PASSWORD
-GRAFANA_CLICKHOUSE_PASSWORD=$TEST_GRAFANA_CLICKHOUSE_PASSWORD
-AGENT_TELEMETRY_MAC_STUDIO_TOKEN=$TEST_AGENT_TELEMETRY_MAC_STUDIO_TOKEN
-AGENT_TELEMETRY_MAC_MINI_1_TOKEN=$TEST_AGENT_TELEMETRY_MAC_MINI_1_TOKEN
-AGENT_TELEMETRY_MAC_MINI_2_TOKEN=$TEST_AGENT_TELEMETRY_MAC_MINI_2_TOKEN
-TELEMETRY_TTL=$TEST_TELEMETRY_TTL
-EOF
+test_command_argument_forwarding() {
+  assert_command_output 'codex<--model><two words>' codex --model 'two words'
+  assert_command_output 'claude<--model><two words>' claude --model 'two words'
+  assert_command_output 'helm<--values><two words.yaml>' cluster-install --values 'two words.yaml'
+  assert_command_output 'k9s<k9s><pods>' k9s pods
 }
 
-write_edge_env() {
-  local edge_env=$1
-  cat >"$edge_env" <<EOF
-AGENT_TELEMETRY_UPSTREAM=https://studio.example.ts.net:4318
-AGENT_TELEMETRY_HOST=edge-test
-AGENT_TELEMETRY_INGEST_TOKEN=$TEST_AGENT_TELEMETRY_MAC_STUDIO_TOKEN
-EOF
-}
-
-run_studio_validation() {
-  env \
-    GATEWAY_PORT="$TEST_GATEWAY_PORT" \
-    GATEWAY_PORT_MAC_MINI_1="$TEST_GATEWAY_PORT_MAC_MINI_1" \
-    GATEWAY_PORT_MAC_MINI_2="$TEST_GATEWAY_PORT_MAC_MINI_2" \
-    GRAFANA_PORT="$TEST_GRAFANA_PORT" \
-    TAILSCALE_DNS_NAME="$TEST_TAILSCALE_DNS_NAME" \
-    GF_SECURITY_ADMIN_USER="$TEST_GF_SECURITY_ADMIN_USER" \
-    TELEMETRY_TTL="$TEST_TELEMETRY_TTL" \
-    GF_SECURITY_ADMIN_PASSWORD="$TEST_GF_SECURITY_ADMIN_PASSWORD" \
-    CLICKHOUSE_PASSWORD="$TEST_CLICKHOUSE_PASSWORD" \
-    GRAFANA_CLICKHOUSE_PASSWORD="$TEST_GRAFANA_CLICKHOUSE_PASSWORD" \
-    AGENT_TELEMETRY_MAC_STUDIO_TOKEN="$TEST_AGENT_TELEMETRY_MAC_STUDIO_TOKEN" \
-    AGENT_TELEMETRY_MAC_MINI_1_TOKEN="$TEST_AGENT_TELEMETRY_MAC_MINI_1_TOKEN" \
-    AGENT_TELEMETRY_MAC_MINI_2_TOKEN="$TEST_AGENT_TELEMETRY_MAC_MINI_2_TOKEN" \
-    bash -c "$hnetctl_source
-validate_studio_public_config
-validate_studio_secrets" "$repo_dir/ops/apps/hnetctl/hnetctl"
+assert_command_output() {
+  local expected=${1:?} output script
+  shift
+  script=$hnetctl_source$'\ncodex_launch() { printf "codex"; printf "<%s>" "$@"; }\nclaude_launch() { printf "claude"; printf "<%s>" "$@"; }\ncluster_install() { printf "helm"; printf "<%s>" "$@"; }\nk9s_open() { printf "k9s"; printf "<%s>" "$@"; }\nmain "$@"'
+  output=$(HNET_PACKAGE_ROOT='' bash -c "$script" "$repo_dir/ops/apps/hnetctl/hnetctl" "$@")
+  [[ $output == "$expected" ]] || fail "Command arguments changed during dispatch."
 }
 
 test_hnetctl_resolves_the_ops_telemetry_path() {
@@ -115,7 +81,8 @@ load_studio_config resolve
 unset AGENT_TELEMETRY_REDACT_PATTERN
 load_edge_config
 [[ $AGENT_TELEMETRY_REDACT_PATTERN == "$EXPECTED_REDACTION_PATTERN" ]]'
-  env TELEMETRY_STUDIO_ENV="$config" TELEMETRY_EDGE_ENV="$config" \
+  env HNET_CLIENTS_FILE="$repo_dir/ops/telemetry/clients.example.json" \
+    TELEMETRY_STUDIO_ENV="$config" TELEMETRY_EDGE_ENV="$config" \
     EXPECTED_REDACTION_PATTERN="$pattern" bash -c "$script" "$repo_dir/ops/apps/hnetctl/hnetctl"
 }
 
@@ -139,6 +106,18 @@ test_hnetctl_validates_redaction_patterns() {
     fi
     [[ $output != *synthetic-private-pattern* ]] || fail "Personal pattern appeared in validation output."
   done
+}
+
+# shellcheck disable=SC2016 # Dollar signs are literal regression data.
+test_hnetctl_preserves_personal_patterns_during_startup() {
+  write_studio_env "$test_root/pattern-studio.env"
+  write_edge_env "$test_root/pattern-edge.env"
+  printf '%s\n' 'AGENT_TELEMETRY_REDACT_PATTERN=\Qedge$$tag@example.invalid\E' >>"$test_root/pattern-edge.env"
+  run_redaction_start bootstrap '' 'a^' '\Qedge$$$$tag@example.invalid\E'
+  printf '%s\n' 'AGENT_TELEMETRY_REDACT_PATTERN=\Qstudio$$tag@example.invalid\E' >>"$test_root/pattern-studio.env"
+  run_redaction_start operator_up '' '\Qstudio$$$$tag@example.invalid\E' '\Qedge$$$$tag@example.invalid\E'
+  run_redaction_start operator_up '\Qoverride$$tag@example.invalid\E' \
+    '\Qoverride$$$$tag@example.invalid\E' '\Qoverride$$$$tag@example.invalid\E'
 }
 
 run_redaction_start() {
@@ -177,18 +156,6 @@ kubectl_command() {
     bash -c "$script" "$repo_dir/ops/apps/hnetctl/hnetctl"
 }
 
-# shellcheck disable=SC2016 # Dollar signs are literal regression data.
-test_hnetctl_preserves_personal_patterns_during_startup() {
-  write_studio_env "$test_root/pattern-studio.env"
-  write_edge_env "$test_root/pattern-edge.env"
-  printf '%s\n' 'AGENT_TELEMETRY_REDACT_PATTERN=\Qedge$$tag@example.invalid\E' >>"$test_root/pattern-edge.env"
-  run_redaction_start bootstrap '' 'a^' '\Qedge$$$$tag@example.invalid\E'
-  printf '%s\n' 'AGENT_TELEMETRY_REDACT_PATTERN=\Qstudio$$tag@example.invalid\E' >>"$test_root/pattern-studio.env"
-  run_redaction_start operator_up '' '\Qstudio$$$$tag@example.invalid\E' '\Qedge$$$$tag@example.invalid\E'
-  run_redaction_start operator_up '\Qoverride$$tag@example.invalid\E' \
-    '\Qoverride$$$$tag@example.invalid\E' '\Qoverride$$$$tag@example.invalid\E'
-}
-
 test_hnetctl_creates_cluster_secret_from_studio_config() {
   local studio_env="$test_root/studio.env"
   local kubectl_log="$test_root/kubectl.log"
@@ -217,23 +184,61 @@ test_hnetctl_creates_cluster_secret_from_studio_config() {
 
 test_hnetctl_templates_custom_secret_name() {
   local rendered
-  rendered=$(HNET_KUBE_SECRET=hnet-test-secrets "$repo_dir/ops/apps/hnetctl/hnetctl" cluster-template)
+  write_studio_env "$test_root/template-studio.env"
+  rendered=$(TELEMETRY_STUDIO_ENV="$test_root/template-studio.env" HNET_KUBE_SECRET=hnet-test-secrets \
+    "$repo_dir/ops/apps/hnetctl/hnetctl" cluster-template)
   assert_contains "$rendered" 'name: hnet-test-secrets'
   [[ $rendered != *'name: hnet-telemetry-secrets'* ]] || fail 'Chart ignored the custom Secret name.'
 }
 
-run_docker_observation() {
-  local script
-  # shellcheck disable=SC2016 # Variables expand in the child Bash process.
-  script=$hnetctl_source'
-start_docker_app() { touch "$OPS_TEST_START_MARKER"; exit 80; }
-"$OPS_TEST_OBSERVE_COMMAND" logs collector'
-  env PATH="$test_root/bin:$PATH" TELEMETRY_DOCKER_BIN="$test_root/bin/docker" \
-    TELEMETRY_STUDIO_ENV="$test_root/observe-studio.env" TELEMETRY_EDGE_ENV="$test_root/observe-edge.env" \
-    OPS_TEST_DOCKER_LOG="$test_root/observe-docker.log" OPS_TEST_DOCKER_INFO_EXIT_CODE="$2" \
-    OPS_TEST_CURL_LOG="$test_root/observe-curl.log" OPS_TEST_TAILSCALE_LOG="$test_root/observe-tailscale.log" \
-    OPS_TEST_START_MARKER="$test_root/unexpected-start" OPS_TEST_OBSERVE_COMMAND="$1" \
-    bash -c "$script" "$repo_dir/ops/apps/hnetctl/hnetctl"
+test_standalone_cluster_commands_use_inventory() (
+  local original_path=$PATH clients rendered key
+  configure_standalone_cluster_fixture
+  "$repo_dir/ops/apps/hnetctl/hnetctl" cluster-secrets
+  "$repo_dir/ops/apps/hnetctl/hnetctl" cluster-install
+  clients=$(sed -n 's/^clients=//p' "$OPS_TEST_HELM_LOG")
+  [[ -n $clients ]] || fail "Standalone install omitted the client inventory."
+  jq -e 'length == 2 and .[0].port == 5010 and .[1].port == 5011' <<<"$clients" >/dev/null
+  rendered=$(PATH="$original_path" "$repo_dir/ops/apps/hnetctl/hnetctl" cluster-template)
+  for key in HNET_CLIENT_TOKEN_5010 HNET_CLIENT_TOKEN_5011; do
+    grep -Fxq "$key" "$OPS_TEST_SECRET_KEYS" || fail "Secret omitted a configured client."
+    assert_contains "$rendered" "key: $key"
+  done
+  [[ $rendered != *'key: AGENT_TELEMETRY_MAC_'* ]] || fail "Standalone chart retained legacy credentials."
+)
+
+configure_standalone_cluster_fixture() {
+  unset HNET_CLIENTS_FILE
+  export TELEMETRY_STUDIO_ENV="$test_root/cluster-studio.env" HNET_KUBE_RUNTIME=none
+  export OPS_TEST_HELM_LOG="$test_root/cluster-helm.log" OPS_TEST_KUBECTL_LOG="$test_root/cluster-kubectl.log"
+  export OPS_TEST_SECRET_KEYS="$test_root/cluster-secret-keys"
+  export GF_SECURITY_ADMIN_PASSWORD=$TEST_GF_SECURITY_ADMIN_PASSWORD
+  export CLICKHOUSE_PASSWORD=$TEST_CLICKHOUSE_PASSWORD GRAFANA_CLICKHOUSE_PASSWORD=$TEST_GRAFANA_CLICKHOUSE_PASSWORD
+  export HNET_CLIENT_TOKEN_5010=$TEST_AGENT_TELEMETRY_MAC_STUDIO_TOKEN
+  export HNET_CLIENT_TOKEN_5011=$TEST_AGENT_TELEMETRY_MAC_MINI_1_TOKEN
+  sed "s|^HNET_CLIENTS_FILE=.*|HNET_CLIENTS_FILE=$test_root/cluster-clients.json|" \
+    "$repo_dir/ops/telemetry/.env.mac-studio.example" >"$TELEMETRY_STUDIO_ENV"
+  jq '.[0] += {port: 5010, hostPort: 15010, tokenRef: "op://TEST/central/password"} |
+    . + [.[0] + {name: "edge", port: 5011, hostPort: 15011, tokenRef: "op://TEST/edge/password", central: false}]' \
+    "$repo_dir/ops/telemetry/clients.example.json" >"$test_root/cluster-clients.json"
+  write_standalone_cluster_tools
+  export PATH="$test_root/cluster-bin:$PATH"
+}
+
+write_standalone_cluster_tools() {
+  mkdir -p "$test_root/cluster-bin"
+  cp "$test_root/bin/helm" "$test_root/cluster-bin/helm"
+  cp "$test_root/bin/kubectl" "$test_root/cluster-bin/kubectl-fixture"
+  cat >"$test_root/cluster-bin/kubectl" <<'TOOL'
+#!/bin/sh
+for arg; do
+  case "$arg" in
+  --from-env-file=*) cut -d= -f1 "${arg#*=}" >"${OPS_TEST_SECRET_KEYS:?}" ;;
+  esac
+done
+exec "${0%/*}/kubectl-fixture" "$@"
+TOOL
+  chmod +x "$test_root/cluster-bin/kubectl"
 }
 
 test_status_and_logs_never_start_docker() {
@@ -250,6 +255,34 @@ test_status_and_logs_never_start_docker() {
     [[ $(<"$test_root/observe-docker.log") == info ]] || fail 'Observation continued after Docker failed.'
     [[ ! -e $test_root/unexpected-start ]] || fail 'Observation attempted to start Docker.'
   done
+}
+
+run_docker_observation() {
+  local script
+  # shellcheck disable=SC2016 # Variables expand in the child Bash process.
+  script=$hnetctl_source'
+start_docker_app() { touch "$OPS_TEST_START_MARKER"; exit 80; }
+"$OPS_TEST_OBSERVE_COMMAND" logs collector'
+  env PATH="$test_root/bin:$PATH" TELEMETRY_DOCKER_BIN="$test_root/bin/docker" \
+    TELEMETRY_STUDIO_ENV="$test_root/observe-studio.env" TELEMETRY_EDGE_ENV="$test_root/observe-edge.env" \
+    OPS_TEST_DOCKER_LOG="$test_root/observe-docker.log" OPS_TEST_DOCKER_INFO_EXIT_CODE="$2" \
+    OPS_TEST_CURL_LOG="$test_root/observe-curl.log" OPS_TEST_TAILSCALE_LOG="$test_root/observe-tailscale.log" \
+    OPS_TEST_START_MARKER="$test_root/unexpected-start" OPS_TEST_OBSERVE_COMMAND="$1" \
+    bash -c "$script" "$repo_dir/ops/apps/hnetctl/hnetctl"
+}
+
+test_state_changing_studio_commands_start_docker() {
+  local command_name compose_log
+  write_studio_env "$test_root/state-studio.env"
+  for command_name in backup archive restart; do
+    run_state_changing_studio_command "$command_name"
+    assert_file "$test_root/$command_name-started"
+    compose_log=$(<"$test_root/$command_name-compose.log")
+    assert_contains "$compose_log" 'config --quiet'
+  done
+  assert_contains "$(<"$test_root/backup-compose.log")" 'exec -T'
+  assert_contains "$(<"$test_root/archive-compose.log")" 'exec -T'
+  assert_contains "$(<"$test_root/restart-compose.log")" 'restart'
 }
 
 run_state_changing_studio_command() {
@@ -292,20 +325,6 @@ esac'
     bash -c "$script" "$repo_dir/ops/apps/hnetctl/hnetctl"
 }
 
-test_state_changing_studio_commands_start_docker() {
-  local command_name compose_log
-  write_studio_env "$test_root/state-studio.env"
-  for command_name in backup archive restart; do
-    run_state_changing_studio_command "$command_name"
-    assert_file "$test_root/$command_name-started"
-    compose_log=$(<"$test_root/$command_name-compose.log")
-    assert_contains "$compose_log" 'config --quiet'
-  done
-  assert_contains "$(<"$test_root/backup-compose.log")" 'exec -T'
-  assert_contains "$(<"$test_root/archive-compose.log")" 'exec -T'
-  assert_contains "$(<"$test_root/restart-compose.log")" 'restart'
-}
-
 test_archive_existing_backup_does_not_start_docker() {
   local script
   write_studio_env "$test_root/existing-archive-studio.env"
@@ -331,6 +350,18 @@ studio_archive archive synthetic-profile synthetic-existing'
   [[ ! -e $test_root/existing-unexpected-start ]] || fail 'Archive started Docker for an existing backup.'
 }
 
+test_backups_use_selected_docker() {
+  make_backup_fakes
+  run_backup_command "$repo_dir/ops/apps/hnetctl/hnetctl" backup synthetic-backup >/dev/null
+  run_backup_command "$repo_dir/ops/telemetry/backup.sh" synthetic-backup >/dev/null
+  assert_contains "$(<"$test_root/backup-docker.log")" "BACKUP DATABASE otel TO Disk('telemetry_backups', 'synthetic-backup')"
+  : >"$test_root/backup-docker.log"
+  if run_backup_command "$repo_dir/ops/apps/hnetctl/hnetctl" backup '../invalid' >/dev/null 2>&1; then
+    fail 'Invalid backup name was accepted.'
+  fi
+  [[ $(<"$test_root/backup-docker.log") != *BACKUP_QUERY* ]] || fail 'Invalid backup reached ClickHouse.'
+}
+
 make_backup_fakes() {
   mkdir -p "$test_root/backup-bin"
   cp "$test_root/bin/docker" "$test_root/backup-bin/selected-docker"
@@ -347,23 +378,17 @@ TOOL
   write_studio_env "$test_root/backup-studio.env"
 }
 
-run_backup_command() {
-  env PATH="$test_root/backup-bin:$PATH" \
-    TELEMETRY_STUDIO_ENV="$test_root/backup-studio.env" \
-    TELEMETRY_DOCKER_BIN="$test_root/backup-bin/selected-docker" \
-    OPS_TEST_DOCKER_LOG="$test_root/backup-docker.log" "$@"
+test_archives_use_selected_docker() {
+  run_test_archive "$test_root/archived"
+  assert_file "$test_root/archived"
+  assert_contains "$(<"$test_root/backup-docker.log")" "BACKUP DATABASE otel TO Disk('telemetry_backups', 'synthetic-archive')"
 }
 
-test_backups_use_selected_docker() {
-  make_backup_fakes
-  run_backup_command "$repo_dir/ops/apps/hnetctl/hnetctl" backup synthetic-backup >/dev/null
-  run_backup_command "$repo_dir/ops/telemetry/backup.sh" synthetic-backup >/dev/null
-  assert_contains "$(<"$test_root/backup-docker.log")" "BACKUP DATABASE otel TO Disk('telemetry_backups', 'synthetic-backup')"
-  : >"$test_root/backup-docker.log"
-  if run_backup_command "$repo_dir/ops/apps/hnetctl/hnetctl" backup '../invalid' >/dev/null 2>&1; then
-    fail 'Invalid backup name was accepted.'
-  fi
-  [[ $(<"$test_root/backup-docker.log") != *BACKUP_QUERY* ]] || fail 'Invalid backup reached ClickHouse.'
+test_failed_backups_stop_archiving() {
+  local result=0
+  OPS_TEST_BACKUP_EXIT_CODE=75 run_test_archive "$test_root/invalid-archive" || result=$?
+  [[ $result -eq 75 ]] || fail 'Archive did not propagate the backup failure.'
+  [[ ! -e $test_root/invalid-archive ]] || fail 'A failed backup was archived.'
 }
 
 run_test_archive() {
@@ -382,17 +407,11 @@ studio_archive archive synthetic-profile synthetic-archive'
     bash -c "$script" "$repo_dir/ops/apps/hnetctl/hnetctl" >/dev/null
 }
 
-test_archives_use_selected_docker() {
-  run_test_archive "$test_root/archived"
-  assert_file "$test_root/archived"
-  assert_contains "$(<"$test_root/backup-docker.log")" "BACKUP DATABASE otel TO Disk('telemetry_backups', 'synthetic-archive')"
-}
-
-test_failed_backups_stop_archiving() {
-  local result=0
-  OPS_TEST_BACKUP_EXIT_CODE=75 run_test_archive "$test_root/invalid-archive" || result=$?
-  [[ $result -eq 75 ]] || fail 'Archive did not propagate the backup failure.'
-  [[ ! -e $test_root/invalid-archive ]] || fail 'A failed backup was archived.'
+run_backup_command() {
+  env PATH="$test_root/backup-bin:$PATH" \
+    TELEMETRY_STUDIO_ENV="$test_root/backup-studio.env" \
+    TELEMETRY_DOCKER_BIN="$test_root/backup-bin/selected-docker" \
+    OPS_TEST_DOCKER_LOG="$test_root/backup-docker.log" "$@"
 }
 
 test_hnetctl_opens_k9s_with_orbstack_context() {
@@ -477,20 +496,58 @@ test_hnetctl_mprocs_bootstraps_compose_and_kubernetes() {
   assert_contains "$mprocs_args" "hnet"
 }
 
+write_studio_env() {
+  local studio_env=$1
+  cat >"$studio_env" <<EOF
+GATEWAY_PORT=$TEST_GATEWAY_PORT
+GATEWAY_PORT_MAC_MINI_1=$TEST_GATEWAY_PORT_MAC_MINI_1
+GATEWAY_PORT_MAC_MINI_2=$TEST_GATEWAY_PORT_MAC_MINI_2
+GRAFANA_PORT=$TEST_GRAFANA_PORT
+TAILSCALE_DNS_NAME=$TEST_TAILSCALE_DNS_NAME
+GF_SECURITY_ADMIN_USER=$TEST_GF_SECURITY_ADMIN_USER
+GF_SECURITY_ADMIN_PASSWORD=$TEST_GF_SECURITY_ADMIN_PASSWORD
+CLICKHOUSE_PASSWORD=$TEST_CLICKHOUSE_PASSWORD
+GRAFANA_CLICKHOUSE_PASSWORD=$TEST_GRAFANA_CLICKHOUSE_PASSWORD
+AGENT_TELEMETRY_MAC_STUDIO_TOKEN=$TEST_AGENT_TELEMETRY_MAC_STUDIO_TOKEN
+AGENT_TELEMETRY_MAC_MINI_1_TOKEN=$TEST_AGENT_TELEMETRY_MAC_MINI_1_TOKEN
+AGENT_TELEMETRY_MAC_MINI_2_TOKEN=$TEST_AGENT_TELEMETRY_MAC_MINI_2_TOKEN
+TELEMETRY_TTL=$TEST_TELEMETRY_TTL
+EOF
+}
+
+write_edge_env() {
+  local edge_env=$1
+  cat >"$edge_env" <<EOF
+AGENT_TELEMETRY_UPSTREAM=https://studio.example.ts.net:4318
+AGENT_TELEMETRY_HOST=edge-test
+AGENT_TELEMETRY_INGEST_TOKEN=$TEST_AGENT_TELEMETRY_MAC_STUDIO_TOKEN
+EOF
+}
+
 test_hnetctl_validates_gateway_tokens() {
   run_studio_validation
 }
 
-run_cluster_status() {
-  env PATH="$test_root/bin:$PATH" \
-    HNET_KUBE_RUNTIME=orbstack \
-    HNET_KUBECONFIG="$test_root/status-kubeconfig" \
-    HNET_KUBE_CONTEXT=status-test \
-    HNET_KUBE_NAMESPACE=telemetry-test \
-    OPS_TEST_KUBECTL_LOG="$test_root/status-kubectl.log" \
-    OPS_TEST_ORBCTL_LOG="$test_root/status-orbctl.log" \
-    OPS_TEST_KUBECTL_EXIT_CODE="$1" \
-    "$repo_dir/ops/apps/hnetctl/hnetctl" cluster-status
+run_studio_validation() {
+  env \
+    GATEWAY_PORT="$TEST_GATEWAY_PORT" \
+    GATEWAY_PORT_MAC_MINI_1="$TEST_GATEWAY_PORT_MAC_MINI_1" \
+    GATEWAY_PORT_MAC_MINI_2="$TEST_GATEWAY_PORT_MAC_MINI_2" \
+    GRAFANA_PORT="$TEST_GRAFANA_PORT" \
+    TAILSCALE_DNS_NAME="$TEST_TAILSCALE_DNS_NAME" \
+    GF_SECURITY_ADMIN_USER="$TEST_GF_SECURITY_ADMIN_USER" \
+    TELEMETRY_TTL="$TEST_TELEMETRY_TTL" \
+    GF_SECURITY_ADMIN_PASSWORD="$TEST_GF_SECURITY_ADMIN_PASSWORD" \
+    CLICKHOUSE_PASSWORD="$TEST_CLICKHOUSE_PASSWORD" \
+    GRAFANA_CLICKHOUSE_PASSWORD="$TEST_GRAFANA_CLICKHOUSE_PASSWORD" \
+    AGENT_TELEMETRY_MAC_STUDIO_TOKEN="$TEST_AGENT_TELEMETRY_MAC_STUDIO_TOKEN" \
+    AGENT_TELEMETRY_MAC_MINI_1_TOKEN="$TEST_AGENT_TELEMETRY_MAC_MINI_1_TOKEN" \
+    AGENT_TELEMETRY_MAC_MINI_2_TOKEN="$TEST_AGENT_TELEMETRY_MAC_MINI_2_TOKEN" \
+    bash -c "$hnetctl_source
+studio_env=/dev/null
+load_client_inventory
+validate_studio_public_config
+validate_studio_secrets" "$repo_dir/ops/apps/hnetctl/hnetctl"
 }
 
 test_cluster_status_never_starts_kubernetes() {
@@ -511,6 +568,18 @@ test_cluster_status_never_starts_kubernetes() {
   fi
 }
 
+run_cluster_status() {
+  env PATH="$test_root/bin:$PATH" \
+    HNET_KUBE_RUNTIME=orbstack \
+    HNET_KUBECONFIG="$test_root/status-kubeconfig" \
+    HNET_KUBE_CONTEXT=status-test \
+    HNET_KUBE_NAMESPACE=telemetry-test \
+    OPS_TEST_KUBECTL_LOG="$test_root/status-kubectl.log" \
+    OPS_TEST_ORBCTL_LOG="$test_root/status-orbctl.log" \
+    OPS_TEST_KUBECTL_EXIT_CODE="$1" \
+    "$repo_dir/ops/apps/hnetctl/hnetctl" cluster-status
+}
+
 test_hnetctl_rejects_duplicate_gateway_tokens() {
   if env \
     GATEWAY_PORT="$TEST_GATEWAY_PORT" \
@@ -527,6 +596,8 @@ test_hnetctl_rejects_duplicate_gateway_tokens() {
     AGENT_TELEMETRY_MAC_MINI_1_TOKEN="$TEST_AGENT_TELEMETRY_MAC_STUDIO_TOKEN" \
     AGENT_TELEMETRY_MAC_MINI_2_TOKEN="$TEST_AGENT_TELEMETRY_MAC_MINI_2_TOKEN" \
     bash -c "$hnetctl_source
+studio_env=/dev/null
+load_client_inventory
 validate_studio_secrets" "$repo_dir/ops/apps/hnetctl/hnetctl"; then
     fail "Duplicate gateway tokens were accepted."
   fi
@@ -548,6 +619,7 @@ studio_dashboard_refresh'
 }
 
 make_fake_tools
+test_command_argument_forwarding
 test_dashboard_refresh_reuses_the_schema_container
 test_hnetctl_resolves_the_ops_telemetry_path
 test_hnetctl_validates_edge_ingest_token
@@ -557,6 +629,7 @@ test_hnetctl_preserves_personal_patterns_during_startup
 test_hnetctl_lints_telemetry_chart
 test_hnetctl_creates_cluster_secret_from_studio_config
 test_hnetctl_templates_custom_secret_name
+test_standalone_cluster_commands_use_inventory
 test_status_and_logs_never_start_docker
 test_state_changing_studio_commands_start_docker
 test_archive_existing_backup_does_not_start_docker

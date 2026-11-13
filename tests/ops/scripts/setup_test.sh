@@ -2,11 +2,8 @@
 
 set -euo pipefail
 
-script_path=${BASH_SOURCE[0]}
-script_parent=${script_path%/*}
-script_dir=$(cd -- "$script_parent" && pwd)
 # shellcheck source=tests/ops/test_support.sh
-source "$script_dir/../test_support.sh"
+source "${BASH_SOURCE[0]%/*}/../test_support.sh"
 
 test_setup_installs_and_preserves_hooks() {
   local setup_repo="$test_root/setup-repo"
@@ -27,7 +24,7 @@ test_setup_installs_and_preserves_hooks() {
   [[ -z $hooks_path ]] || fail "Setup configured core.hooksPath unexpectedly."
 
   content=$(<"$hooks_dir/pre-commit")
-  assert_contains "$content" './ops/scripts/lint.sh --strict'
+  assert_contains "$content" 'mise run lint'
   assert_contains "$content" 'git --no-pager diff --cached --check'
   assert_contains "$content" 'pre-commit: passed'
   cat >"$hooks_dir/pre-push" <<'HOOK'

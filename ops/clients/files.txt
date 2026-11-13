@@ -3,6 +3,7 @@ LICENSE
 VERSION
 ops/apps/hnetctl/hnetctl
 ops/apps/hnetctl/client.sh
+ops/apps/hnetctl/clients.sh
 ops/clients/Brewfile
 README.md
 ops/clients/files.txt

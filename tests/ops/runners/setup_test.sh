@@ -2,36 +2,8 @@
 
 set -euo pipefail
 
-script_path=${BASH_SOURCE[0]}
-script_dir=$(cd -- "${script_path%/*}" && pwd)
-repo_dir=$(cd -- "$script_dir/../../.." && pwd)
 # shellcheck source=tests/ops/test_support.sh
-source "$script_dir/../test_support.sh"
-
-make_runner_fakes() {
-  local fake_bin="$test_root/runner-bin"
-  mkdir -p "$fake_bin"
-  cat >"$fake_bin/uname" <<'TOOL'
-#!/bin/sh
-case "${1:-}" in
-  -s) printf '%s\n' Darwin ;;
-  -m) printf '%s\n' arm64 ;;
-esac
-TOOL
-  cat >"$fake_bin/gh" <<'TOOL'
-#!/bin/sh
-case "${1:-}" in
-  auth) exit 0 ;;
-  *) exit 0 ;;
-esac
-TOOL
-  cat >"$fake_bin/launchctl" <<'TOOL'
-#!/bin/sh
-exit 0
-TOOL
-  chmod +x "$fake_bin/uname" "$fake_bin/gh" "$fake_bin/launchctl"
-  printf '%s\n' "$fake_bin"
-}
+source "${BASH_SOURCE[0]%/*}/../test_support.sh"
 
 test_help() {
   local output
@@ -62,61 +34,29 @@ test_setup_rejects_unknown_repository() {
   done
 }
 
-write_runner_package() {
-  local package=$1
-  mkdir -p "$package"
-  cat >"$package/config.sh" <<'TOOL'
-#!/bin/sh
-if [ "${1:-}" = remove ]; then
-  test-step remove
-else
-  test-step configure
-fi
-TOOL
-  cat >"$package/svc.sh" <<'TOOL'
-#!/bin/sh
-test-step "$1"
-TOOL
-  chmod +x "$package/config.sh" "$package/svc.sh"
+test_failed_preparation_preserves_runner() {
+  local step fixture result
+  for step in release download extract invalid-archive registration removal-token; do
+    fixture="$test_root/failure-$step"
+    make_existing_runner "$fixture"
+    result=0
+    run_runner_transaction "$fixture" "$step" >/dev/null 2>&1 || result=$?
+    [[ $result -ne 0 ]] || fail "Failed runner preparation reported success."
+    assert_file "$fixture/runners/example-project/.runner"
+    assert_file "$fixture/runners/example-project/_work/preserved"
+    if grep -Eq '^(stop|uninstall|remove|configure|install|start)$' "$fixture/steps"; then
+      fail "Runner was changed before preparation succeeded."
+    fi
+  done
 }
 
-write_runner_api_fake() {
-  cat >"$1/gh" <<'TOOL'
-#!/bin/sh
-case "$*" in
-  *releases/latest*) test-step release || exit "$?"; printf v1.0.0 ;;
-  *registration-token*) test-step registration || exit "$?"; printf synthetic-registration ;;
-  *remove-token*) test-step removal-token || exit "$?"; printf synthetic-removal ;;
-  *) exit 1 ;;
-esac
-TOOL
-}
-
-write_runner_download_fakes() {
-  cat >"$1/curl" <<'TOOL'
-#!/bin/sh
-test-step download
-TOOL
-  cat >"$1/tar" <<'TOOL'
-#!/bin/sh
-test-step extract || exit "$?"
-[ "$OPS_TEST_FAIL_STEP" != invalid-archive ] || exit 0
-cp -R "$OPS_TEST_PACKAGE/." "$4/"
-TOOL
-}
-
-make_transaction_fakes() {
-  local fake_bin
-  fake_bin=$(make_runner_fakes)
-  cat >"$fake_bin/test-step" <<'TOOL'
-#!/bin/sh
-printf '%s\n' "$1" >> "$OPS_TEST_STEPS"
-[ "$1" != "$OPS_TEST_FAIL_STEP" ] || exit 73
-TOOL
-  write_runner_api_fake "$fake_bin"
-  write_runner_download_fakes "$fake_bin"
-  chmod +x "$fake_bin"/*
-  printf '%s\n' "$fake_bin"
+test_prepared_runner_replaces_existing_runner() {
+  local fixture="$test_root/replacement" expected
+  make_existing_runner "$fixture"
+  run_runner_transaction "$fixture" none >/dev/null
+  expected=$'release\ndownload\nextract\nregistration\nremoval-token\nstop\nuninstall\nremove\nconfigure\ninstall\nstart'
+  [[ $(<"$fixture/steps") == "$expected" ]] || fail "Runner replacement order is incorrect."
+  assert_file "$fixture/runners/example-project/.hnet-repo"
 }
 
 run_runner_transaction() {
@@ -144,36 +84,97 @@ make_existing_runner() {
   touch "$runner_dir/.runner" "$runner_dir/_work/preserved"
 }
 
-test_failed_preparation_preserves_runner() {
-  local step fixture result
-  for step in release download extract invalid-archive registration removal-token; do
-    fixture="$test_root/failure-$step"
-    make_existing_runner "$fixture"
-    result=0
-    run_runner_transaction "$fixture" "$step" >/dev/null 2>&1 || result=$?
-    [[ $result -ne 0 ]] || fail "Failed runner preparation reported success."
-    assert_file "$fixture/runners/example-project/.runner"
-    assert_file "$fixture/runners/example-project/_work/preserved"
-    if grep -Eq '^(stop|uninstall|remove|configure|install|start)$' "$fixture/steps"; then
-      fail "Runner was changed before preparation succeeded."
-    fi
-  done
+prepare_transaction_fixture() {
+  write_runner_package "$test_root/package"
+  transaction_bin=$(make_transaction_fakes)
 }
 
-test_prepared_runner_replaces_existing_runner() {
-  local fixture="$test_root/replacement" expected
-  make_existing_runner "$fixture"
-  run_runner_transaction "$fixture" none >/dev/null
-  expected=$'release\ndownload\nextract\nregistration\nremoval-token\nstop\nuninstall\nremove\nconfigure\ninstall\nstart'
-  [[ $(<"$fixture/steps") == "$expected" ]] || fail "Runner replacement order is incorrect."
-  assert_file "$fixture/runners/example-project/.hnet-repo"
+write_runner_package() {
+  local package=$1
+  mkdir -p "$package"
+  cat >"$package/config.sh" <<'TOOL'
+#!/bin/sh
+if [ "${1:-}" = remove ]; then
+  test-step remove
+else
+  test-step configure
+fi
+TOOL
+  cat >"$package/svc.sh" <<'TOOL'
+#!/bin/sh
+test-step "$1"
+TOOL
+  chmod +x "$package/config.sh" "$package/svc.sh"
+}
+
+make_transaction_fakes() {
+  local fake_bin
+  fake_bin=$(make_runner_fakes)
+  cat >"$fake_bin/test-step" <<'TOOL'
+#!/bin/sh
+printf '%s\n' "$1" >> "$OPS_TEST_STEPS"
+[ "$1" != "$OPS_TEST_FAIL_STEP" ] || exit 73
+TOOL
+  write_runner_api_fake "$fake_bin"
+  write_runner_download_fakes "$fake_bin"
+  chmod +x "$fake_bin"/*
+  printf '%s\n' "$fake_bin"
+}
+
+make_runner_fakes() {
+  local fake_bin="$test_root/runner-bin"
+  mkdir -p "$fake_bin"
+  cat >"$fake_bin/uname" <<'TOOL'
+#!/bin/sh
+case "${1:-}" in
+  -s) printf '%s\n' Darwin ;;
+  -m) printf '%s\n' arm64 ;;
+esac
+TOOL
+  cat >"$fake_bin/gh" <<'TOOL'
+#!/bin/sh
+case "${1:-}" in
+  auth) exit 0 ;;
+  *) exit 0 ;;
+esac
+TOOL
+  cat >"$fake_bin/launchctl" <<'TOOL'
+#!/bin/sh
+exit 0
+TOOL
+  chmod +x "$fake_bin/uname" "$fake_bin/gh" "$fake_bin/launchctl"
+  printf '%s\n' "$fake_bin"
+}
+
+write_runner_api_fake() {
+  cat >"$1/gh" <<'TOOL'
+#!/bin/sh
+case "$*" in
+  *releases/latest*) test-step release || exit "$?"; printf v1.0.0 ;;
+  *registration-token*) test-step registration || exit "$?"; printf synthetic-registration ;;
+  *remove-token*) test-step removal-token || exit "$?"; printf synthetic-removal ;;
+  *) exit 1 ;;
+esac
+TOOL
+}
+
+write_runner_download_fakes() {
+  cat >"$1/curl" <<'TOOL'
+#!/bin/sh
+test-step download
+TOOL
+  cat >"$1/tar" <<'TOOL'
+#!/bin/sh
+test-step extract || exit "$?"
+[ "$OPS_TEST_FAIL_STEP" != invalid-archive ] || exit 0
+cp -R "$OPS_TEST_PACKAGE/." "$4/"
+TOOL
 }
 
 test_help
 test_dry_run
 test_setup_rejects_unknown_repository
-write_runner_package "$test_root/package"
-transaction_bin=$(make_transaction_fakes)
+prepare_transaction_fixture
 test_failed_preparation_preserves_runner
 test_prepared_runner_replaces_existing_runner
 echo "runner setup tests passed."

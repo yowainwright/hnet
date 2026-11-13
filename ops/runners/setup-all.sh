@@ -13,6 +13,26 @@ replace=false
 dry_run=false
 install_deps=false
 
+main() {
+  [[ $dry_run != true || $install_deps != true ]] ||
+    fail "--dry-run cannot be combined with --install-deps."
+
+  install_runner_dependencies
+  require_command gh
+  [[ -x $setup_script ]] || fail "Missing runner setup script: $setup_script"
+  gh auth status >/dev/null 2>&1 || fail "Authenticate GitHub CLI before setup: gh auth login"
+  account=${account:-$(gh api user --jq '.login')}
+
+  private_repos=$(gh repo list "$account" --visibility private --limit 1000 \
+    --json nameWithOwner,isArchived \
+    --jq '.[] | select(.isArchived | not) | .nameWithOwner')
+  [[ -n $private_repos ]] || {
+    echo "No active private repositories found for $account."
+    return 0
+  }
+  setup_private_repositories
+}
+
 usage() {
   cat <<'USAGE'
 Usage: setup-all.sh [options]
@@ -31,13 +51,37 @@ Options:
 USAGE
 }
 
+install_runner_dependencies() {
+  [[ $install_deps == true ]] || return 0
+  require_command mise
+  mise -C "$repo_dir" install
+  mise_paths=$(mise -C "$repo_dir" bin-paths | paste -sd ':' -)
+  export PATH="$mise_paths:$PATH"
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"
+}
+
 fail() {
   echo "$1" >&2
   exit "${2:-1}"
 }
 
-require_command() {
-  command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"
+setup_private_repositories() {
+  repo_count=0
+  while IFS= read -r repo; do
+    [[ -n $repo ]] || continue
+    repo_count=$((repo_count + 1))
+    repo_args=(--repo "$repo" --runner-root "$runner_root")
+    [[ -n $labels ]] && repo_args+=(--labels "$labels")
+    [[ $replace == true ]] && repo_args+=(--replace)
+    [[ $dry_run == true ]] && repo_args+=(--dry-run)
+    echo "Setting up runner $repo_count: $repo"
+    "$setup_script" "${repo_args[@]}"
+  done <<<"$private_repos"
+
+  echo "Prepared $repo_count private-repository runner(s)."
 }
 
 while (($# > 0)); do
@@ -79,37 +123,4 @@ while (($# > 0)); do
   esac
 done
 
-[[ $dry_run != true || $install_deps != true ]] ||
-  fail "--dry-run cannot be combined with --install-deps."
-if [[ $install_deps == true ]]; then
-  require_command mise
-  mise -C "$repo_dir" install
-  mise_paths=$(mise -C "$repo_dir" bin-paths | paste -sd ':' -)
-  export PATH="$mise_paths:$PATH"
-fi
-require_command gh
-[[ -x $setup_script ]] || fail "Missing runner setup script: $setup_script"
-gh auth status >/dev/null 2>&1 || fail "Authenticate GitHub CLI before setup: gh auth login"
-account=${account:-$(gh api user --jq '.login')}
-
-private_repos=$(gh repo list "$account" --visibility private --limit 1000 \
-  --json nameWithOwner,isArchived \
-  --jq '.[] | select(.isArchived | not) | .nameWithOwner')
-[[ -n $private_repos ]] || {
-  echo "No active private repositories found for $account."
-  exit 0
-}
-
-repo_count=0
-while IFS= read -r repo; do
-  [[ -n $repo ]] || continue
-  repo_count=$((repo_count + 1))
-  repo_args=(--repo "$repo" --runner-root "$runner_root")
-  [[ -n $labels ]] && repo_args+=(--labels "$labels")
-  [[ $replace == true ]] && repo_args+=(--replace)
-  [[ $dry_run == true ]] && repo_args+=(--dry-run)
-  echo "Setting up runner $repo_count: $repo"
-  "$setup_script" "${repo_args[@]}"
-done <<<"$private_repos"
-
-echo "Prepared $repo_count private-repository runner(s)."
+main

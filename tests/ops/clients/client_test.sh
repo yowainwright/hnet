@@ -214,6 +214,7 @@ test_central_package_enrollment() {
   sed 's/mac-studio.your-tailnet.ts.net/studio.example.ts.net/' \
     "$repo_dir/ops/telemetry/.env.mac-studio.example" >"$prefix/ops/telemetry/.env.mac-studio"
   sed 's/:4319/:4318/;s/mac-mini-1/mac-studio/g' "$test_root/enrollment.env" >"$config"
+  jq '.[0].name = "mac-studio"' "$repo_dir/ops/telemetry/clients.example.json" >"$prefix/ops/telemetry/clients.json"
   cp "$prefix/ops/telemetry/.env.mac-studio" "$test_root/central-before.env"
   printf 'preserve\n' >"$prefix/ops/telemetry/backups/sentinel"
   test_central_enrollment_guards "$entry" "$prefix" "$config"
@@ -267,12 +268,26 @@ test_conflicting_codex_telemetry_is_preserved() {
 }
 
 test_bad_slot_configuration_is_rejected() {
-  sed 's/:4319/:4320/' "$test_root/enrollment.env" >"$test_root/wrong-slot.env"
+  sed 's/:4319/:65536/' "$test_root/enrollment.env" >"$test_root/wrong-slot.env"
   if "$client_package/install.sh" --yes --prefix "$test_root/wrong-slot" \
     --config "$test_root/wrong-slot.env" >/dev/null 2>&1; then
-    fail "Mismatched port and identity were accepted."
+    fail "An out-of-range receiver port was accepted."
   fi
   [[ ! -e "$test_root/wrong-slot" ]] || fail "Invalid configuration created an installation."
+  test_macbook_enrollment
+}
+
+test_macbook_enrollment() {
+  local prefix="$test_root/macbook-client" config="$test_root/macbook.env"
+  sed -e 's/mac-mini-1/travel-laptop/g' -e 's/:4319/:5000/' "$test_root/enrollment.env" >"$config"
+  ZDOTDIR="$test_root/macbook-shell" "$client_package/install.sh" --yes --prefix "$prefix" --config "$config"
+  assert_file "$prefix/ops/telemetry/.env.edge"
+  grep -Fq 'AGENT_TELEMETRY_HOST=travel-laptop' "$prefix/ops/telemetry/.env.edge" || fail "Arbitrary client name was lost."
+  sed 's/:5000/:13133/' "$config" >"$test_root/macbook-wrong-port.env"
+  if "$client_package/install.sh" --yes --prefix "$test_root/macbook-wrong" \
+    --config "$test_root/macbook-wrong-port.env" >/dev/null 2>&1; then
+    fail "Enrollment accepted the collector health port."
+  fi
 }
 
 test_checksum_failure_stops_installation() {
@@ -283,6 +298,7 @@ test_checksum_failure_stops_installation() {
   fi
   [[ ! -e "$test_root/tampered" ]] || fail "Tampered source changed the destination."
 }
+
 wait_for_test_command() {
   local process=${1:?} watchdog result=0
   (

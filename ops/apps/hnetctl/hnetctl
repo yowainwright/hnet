@@ -2,376 +2,137 @@
 
 set -euo pipefail
 
-script_path=${BASH_SOURCE[0]:-$0}
-script_parent=${script_path%/*}
-app_dir=$(cd -- "$script_parent" && pwd)
-ops_dir=$(cd -- "$app_dir/../.." && pwd)
-telemetry_dir="$ops_dir/telemetry"
-telemetry_resources="$telemetry_dir"
-if [[ -n ${HNET_PACKAGE_ROOT:-} ]]; then
+main() {
+  initialize_runtime
+  validate_command_availability "$@"
+  case "${1:-}" in
+  bootstrap | start | serve | status | doctor | dashboard-refresh | logs | restart | backup | archive | restic-init | retention)
+    dispatch_studio_command "$@"
+    ;;
+  edge-start | edge-status | edge-logs) dispatch_edge_command "$@" ;;
+  shell-enable | shell-status | codex-enable | codex | codex-app | chatgpt-app | claude) dispatch_agent_command "$@" ;;
+  client-add | client-install | client-check | client-bundle | release-bundle | --version) dispatch_client_command "$@" ;;
+  cluster-* | k9s | up | mprocs) dispatch_cluster_command "$@" ;;
+  *)
+    usage
+    exit 2
+    ;;
+  esac
+}
+
+dispatch_studio_command() {
+  case "${1:-}" in
+  bootstrap) bootstrap ;;
+  start) studio_start ;;
+  serve) studio_serve ;;
+  status | doctor) studio_status ;;
+  dashboard-refresh) studio_dashboard_refresh ;;
+  logs) studio_logs "$@" ;;
+  restart) studio_restart ;;
+  backup) studio_backup "$@" ;;
+  archive) studio_archive "$@" ;;
+  restic-init) restic_init "$@" ;;
+  retention) studio_retention "$@" ;;
+  esac
+}
+
+dispatch_edge_command() {
+  case "${1:-}" in
+  edge-start) edge_start ;;
+  edge-status) edge_status ;;
+  edge-logs) edge_logs ;;
+  esac
+}
+
+dispatch_agent_command() {
+  local command=${1:?}
+  shift
+  case "$command" in
+  shell-enable) shell_enable ;;
+  shell-status) shell_status ;;
+  codex-enable) codex_enable ;;
+  codex) codex_launch "$@" ;;
+  codex-app) codex_app_launch ;;
+  chatgpt-app) desktop_agent_launch ChatGPT ;;
+  claude) claude_launch "$@" ;;
+  esac
+}
+
+dispatch_client_command() {
+  local command=${1:?}
+  shift
+  case "$command" in
+  client-add) client_registration_command "$@" ;;
+  client-install) client_command client_install "$@" ;;
+  client-check) client_command client_check "$@" ;;
+  client-bundle) client_command client_bundle "$@" ;;
+  release-bundle) release_bundle_command "$@" ;;
+  --version)
+    [[ $# == 0 ]] || fail "Usage: hnetctl --version"
+    printf 'hnetctl %s\n' "$(<"$ops_dir/../VERSION")"
+    ;;
+  esac
+}
+
+release_bundle_command() {
+  [[ -r "$app_dir/release.sh" ]] || fail "Build full release previews from a source checkout."
+  # shellcheck source=ops/apps/hnetctl/client.sh
+  source "$app_dir/client.sh"
+  # shellcheck source=ops/apps/hnetctl/release.sh
+  source "$app_dir/release.sh"
+  release_bundle "$@"
+}
+
+dispatch_cluster_command() {
+  local command=${1:?}
+  shift
+  case "$command" in
+  cluster-lint) cluster_lint ;;
+  cluster-template) cluster_template ;;
+  cluster-secrets) cluster_secrets ;;
+  cluster-bootstrap) cluster_bootstrap ;;
+  cluster-install) cluster_install "$@" ;;
+  cluster-status) cluster_status ;;
+  k9s) k9s_open "$command" "$@" ;;
+  up) operator_up ;;
+  mprocs) operator_mprocs ;;
+  *)
+    usage
+    exit 2
+    ;;
+  esac
+}
+
+initialize_runtime() {
+  script_path=${BASH_SOURCE[0]:-$0}
+  script_parent=${script_path%/*}
+  app_dir=$(cd -- "$script_parent" && pwd)
+  ops_dir=$(cd -- "$app_dir/../.." && pwd)
+  telemetry_dir="$ops_dir/telemetry"
+  telemetry_resources="$telemetry_dir"
+  configure_package_paths
+  studio_env=${TELEMETRY_STUDIO_ENV:-"$telemetry_dir/.env.mac-studio"}
+  edge_env=${TELEMETRY_EDGE_ENV:-"$telemetry_dir/.env.edge"}
+  docker_bin=${TELEMETRY_DOCKER_BIN:-}
+  initialize_operator_config
+}
+
+configure_package_paths() {
+  [[ -n ${HNET_PACKAGE_ROOT:-} ]] || return 0
   telemetry_dir="${HNET_CLIENT_HOME:-$HOME/.local/share/hnet}/ops/telemetry"
   HNET_SHELL_STARTUP_CLIENT="${HNET_CLIENT_HOME:-$HOME/.local/share/hnet}/ops/clients/zsh/auto.zsh"
   export HNET_TELEMETRY_RESOURCES="$telemetry_resources"
-fi
-studio_env=${TELEMETRY_STUDIO_ENV:-}
-edge_env=${TELEMETRY_EDGE_ENV:-}
-docker_bin=${TELEMETRY_DOCKER_BIN:-}
-[[ -n $studio_env ]] || studio_env="$telemetry_dir/.env.mac-studio"
-[[ -n $edge_env ]] || edge_env="$telemetry_dir/.env.edge"
-cluster_namespace=${HNET_KUBE_NAMESPACE:-telemetry}
-cluster_release=${HNET_HELM_RELEASE:-hnet-telemetry}
-cluster_secret=${HNET_KUBE_SECRET:-hnet-telemetry-secrets}
-kube_runtime=${HNET_KUBE_RUNTIME:-orbstack}
-kube_context=${HNET_KUBE_CONTEXT:-}
-kubeconfig=${HNET_KUBECONFIG:-}
-mprocs_config=${HNET_MPROCS_CONFIG:-"$ops_dir/mprocs/hnet.yaml"}
-mprocs_log_dir=${HNET_MPROCS_LOG_DIR:-"$ops_dir/../tmp/mprocs"}
-
-fail() {
-  echo "$1" >&2
-  exit "${2:-1}"
 }
 
-require_command() {
-  command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"
-}
-
-resolve_docker_bin() {
-  local candidate
-  for candidate in "$docker_bin" "$(command -v docker 2>/dev/null || true)" \
-    "$HOME/.orbstack/bin/docker" \
-    /Applications/Docker.app/Contents/Resources/bin/docker; do
-    if [[ -n $candidate && -x $candidate ]]; then
-      printf '%s' "$candidate"
-      return
-    fi
-  done
-  return 1
-}
-
-start_docker_app() {
-  local app_name
-  if [[ -d /Applications/OrbStack.app ]]; then
-    app_name=OrbStack
-  elif [[ -d /Applications/Docker.app ]]; then
-    app_name=Docker
-  else
-    fail "Install OrbStack or Docker Desktop."
-  fi
-  require_command open
-  open -gj -a "$app_name"
-}
-
-docker_ready() {
-  [[ -n $docker_bin ]] && "$docker_bin" info >/dev/null 2>&1
-}
-
-require_running_docker() {
-  docker_bin=$(resolve_docker_bin || true)
-  docker_ready || fail "Docker is unavailable; start it explicitly before running this command."
-}
-
-ensure_docker() {
-  local attempt
-  docker_bin=$(resolve_docker_bin || true)
-  docker_ready || start_docker_app
-  for ((attempt = 1; attempt <= 45; attempt++)); do
-    docker_bin=$(resolve_docker_bin || true)
-    docker_ready && return
-    sleep 2
-  done
-  fail "OrbStack or Docker Desktop did not become ready."
-}
-
-docker_command() {
-  [[ -n $docker_bin ]] || ensure_docker
-  "$docker_bin" "$@"
-}
-
-tailscale_command() {
-  local app_cli=/Applications/Tailscale.app/Contents/MacOS/Tailscale
-  if command -v tailscale >/dev/null 2>&1; then
-    command tailscale "$@"
-    return
-  fi
-  [[ -x $app_cli ]] || fail "Missing Tailscale CLI and macOS app."
-  "$app_cli" "$@"
-}
-
-orbstack_kubeconfig() {
-  printf '%s' "$HOME/.orbstack/k8s/config.yml"
-}
-
-use_orbstack_kube_defaults() {
-  [[ $kube_runtime == orbstack ]] || return
-  [[ -n $kube_context ]] || kube_context=orbstack
-  [[ -n $kubeconfig ]] || kubeconfig=$(orbstack_kubeconfig)
-}
-
-orbstack_kubernetes_enabled() {
-  local line
-  while IFS= read -r line; do
-    [[ $line == "k8s.enable: true" ]] && return 0
-  done < <(orbctl config show 2>/dev/null || true)
-  return 1
-}
-
-kube_command_args() {
-  [[ -n $kubeconfig ]] && printf '%s\0%s\0' --kubeconfig "$kubeconfig"
-  [[ -n $kube_context ]] && printf '%s\0%s\0' --context "$kube_context"
-}
-
-helm_command_args() {
-  [[ -n $kubeconfig ]] && printf '%s\0%s\0' --kubeconfig "$kubeconfig"
-  [[ -n $kube_context ]] && printf '%s\0%s\0' --kube-context "$kube_context"
-}
-
-resolved_config_value() {
-  local key=$1 value=$2 current
-  current=${!key:-}
-  if [[ -n $current ]]; then
-    printf '%s' "$current"
-    return
-  fi
-  if [[ $value == op://* ]]; then
-    require_command op
-    op read "$value"
-    return
-  fi
-  printf '%s' "$value"
-}
-
-valid_redaction_pattern() {
-  local remaining=$1 literal
-  [[ $remaining != *$'\n'* && $remaining != *$'\r'* ]] || return 1
-  [[ $remaining != 'a^' ]] || return 0
-  remaining=${remaining#'(?i)'}
-  while [[ $remaining == '\Q'* ]]; do
-    remaining=${remaining#'\Q'}
-    [[ $remaining == *'\E'* ]] || return 1
-    literal=${remaining%%'\E'*}
-    [[ -n $literal ]] || return 1
-    remaining=${remaining#*'\E'}
-    [[ -n $remaining ]] || return 0
-    [[ $remaining == '|'* ]] || return 1
-    remaining=${remaining#'|'}
-  done
-  return 1
-}
-
-validate_redaction_pattern() {
-  AGENT_TELEMETRY_REDACT_PATTERN=${AGENT_TELEMETRY_REDACT_PATTERN:-a^}
-  valid_redaction_pattern "$AGENT_TELEMETRY_REDACT_PATTERN" ||
-    fail 'Personal matches must be single-line \Qliteral\E entries separated by |, optionally prefixed with (?i).'
-  export AGENT_TELEMETRY_REDACT_PATTERN
-}
-
-collector_redaction_pattern() {
-  local pattern=${AGENT_TELEMETRY_REDACT_PATTERN:-a^}
-  # Collector configuration expansion consumes dollar escapes, even from env values.
-  printf '%s' "${pattern//\$/\$\$}"
-}
-
-load_studio_config() {
-  local secret_mode=${1:-resolve}
-  [[ -f $studio_env ]] || fail "Missing $studio_env; copy .env.mac-studio.example first."
-  while IFS='=' read -r key value; do
-    case "$key" in
-    GATEWAY_PORT | GATEWAY_PORT_MAC_MINI_1 | GATEWAY_PORT_MAC_MINI_2 | GRAFANA_PORT | TAILSCALE_DNS_NAME | GF_SECURITY_ADMIN_USER | TELEMETRY_TTL)
-      value=$(resolved_config_value "$key" "$value")
-      printf -v "$key" '%s' "$value"
-      export "${key?}"
-      ;;
-    GF_SECURITY_ADMIN_PASSWORD | CLICKHOUSE_PASSWORD | GRAFANA_CLICKHOUSE_PASSWORD | AGENT_TELEMETRY_MAC_STUDIO_TOKEN | AGENT_TELEMETRY_MAC_MINI_1_TOKEN | AGENT_TELEMETRY_MAC_MINI_2_TOKEN | AGENT_TELEMETRY_REDACT_PATTERN)
-      [[ $secret_mode == resolve ]] || continue
-      value=$(resolved_config_value "$key" "$value")
-      printf -v "$key" '%s' "$value"
-      export "${key?}"
-      ;;
-    '' | '#'*) ;;
-    *) fail "Unsupported key in $studio_env: $key" ;;
-    esac
-  done <"$studio_env"
-}
-
-valid_port() {
-  [[ $1 =~ ^[0-9]+$ ]] && ((10#$1 >= 1024 && 10#$1 <= 65535))
-}
-
-valid_gateway_port() {
-  local port=$1
-  valid_port "$port" && [[ $port != 4317 && $port != 4318 ]]
-}
-
-validate_token() {
-  local token_name=$1 token=$2
-  [[ ${#token} -ge 32 ]] || fail "$token_name must be at least 32 characters."
-  [[ $token =~ ^[A-Za-z0-9._~-]+$ ]] || fail "$token_name contains unsupported characters."
-}
-
-validate_studio_public_config() {
-  local mini_1_port=${GATEWAY_PORT_MAC_MINI_1:-}
-  local mini_2_port=${GATEWAY_PORT_MAC_MINI_2:-}
-  valid_gateway_port "${GATEWAY_PORT:-}" || fail "GATEWAY_PORT must be between 1024 and 65535 and not use 4317 or 4318."
-  valid_gateway_port "$mini_1_port" || fail "GATEWAY_PORT_MAC_MINI_1 must be between 1024 and 65535 and not use 4317 or 4318."
-  valid_gateway_port "$mini_2_port" || fail "GATEWAY_PORT_MAC_MINI_2 must be between 1024 and 65535 and not use 4317 or 4318."
-  valid_port "${GRAFANA_PORT:-}" || fail "GRAFANA_PORT must be between 1024 and 65535."
-  [[ $GATEWAY_PORT != "$GRAFANA_PORT" && $mini_1_port != "$GRAFANA_PORT" && $mini_2_port != "$GRAFANA_PORT" ]] || fail "Gateway and Grafana ports must differ."
-  [[ $GATEWAY_PORT != "$mini_1_port" && $GATEWAY_PORT != "$mini_2_port" && $mini_1_port != "$mini_2_port" ]] || fail "Gateway host ports must be distinct."
-  [[ ${TAILSCALE_DNS_NAME:-} =~ ^[A-Za-z0-9][A-Za-z0-9.-]*\.ts\.net$ ]] || fail "TAILSCALE_DNS_NAME must be a ts.net name."
-  [[ ${GF_SECURITY_ADMIN_USER:-} =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || fail "Grafana administrator name is invalid."
-  [[ ${TELEMETRY_TTL:-} =~ ^[0-9]+[smhd]$ ]] || fail "TELEMETRY_TTL must use s, m, h, or d."
-}
-
-validate_studio_secrets() {
-  validate_redaction_pattern
-  local admin_password=${GF_SECURITY_ADMIN_PASSWORD:-}
-  local writer_password=${CLICKHOUSE_PASSWORD:-}
-  local reader_password=${GRAFANA_CLICKHOUSE_PASSWORD:-}
-  local studio_token=${AGENT_TELEMETRY_MAC_STUDIO_TOKEN:-}
-  local mini_1_token=${AGENT_TELEMETRY_MAC_MINI_1_TOKEN:-}
-  local mini_2_token=${AGENT_TELEMETRY_MAC_MINI_2_TOKEN:-}
-  [[ ${#admin_password} -ge 24 ]] || fail "Grafana administrator password must be at least 24 characters."
-  [[ ${#writer_password} -ge 24 ]] || fail "ClickHouse writer password must be at least 24 characters."
-  [[ ${#reader_password} -ge 24 ]] || fail "ClickHouse reader password must be at least 24 characters."
-  [[ $writer_password != "$reader_password" ]] || fail "ClickHouse writer and reader passwords must differ."
-  validate_token AGENT_TELEMETRY_MAC_STUDIO_TOKEN "$studio_token"
-  validate_token AGENT_TELEMETRY_MAC_MINI_1_TOKEN "$mini_1_token"
-  validate_token AGENT_TELEMETRY_MAC_MINI_2_TOKEN "$mini_2_token"
-  [[ $studio_token != "$mini_1_token" && $studio_token != "$mini_2_token" && $mini_1_token != "$mini_2_token" ]] || fail "Gateway tokens must be distinct."
-}
-
-load_edge_config() {
-  [[ -f $edge_env ]] || fail "Missing $edge_env; copy .env.edge.example first."
-  while IFS='=' read -r key value; do
-    case "$key" in
-    AGENT_TELEMETRY_UPSTREAM | AGENT_TELEMETRY_HOST | AGENT_TELEMETRY_INGEST_TOKEN | AGENT_TELEMETRY_REDACT_PATTERN)
-      value=$(resolved_config_value "$key" "$value")
-      printf -v "$key" '%s' "$value"
-      export "${key?}"
-      ;;
-    '' | '#'*) ;;
-    *) fail "Unsupported key in $edge_env: $key" ;;
-    esac
-  done <"$edge_env"
-}
-
-validate_edge_config() {
-  validate_redaction_pattern
-  validate_edge_destination
-  validate_token AGENT_TELEMETRY_INGEST_TOKEN "${AGENT_TELEMETRY_INGEST_TOKEN:-}"
-}
-
-validate_edge_destination() {
-  local upstream_pattern='^https://[A-Za-z0-9][A-Za-z0-9.-]*\.ts\.net:(4318|4319|4320)$'
-  local label_pattern='^[A-Za-z0-9][A-Za-z0-9._-]*$'
-  [[ ${AGENT_TELEMETRY_UPSTREAM:-} =~ $upstream_pattern ]] || fail "Edge upstream must be a Studio Tailscale HTTPS endpoint on port 4318, 4319, or 4320."
-  [[ ${AGENT_TELEMETRY_HOST:-} =~ $label_pattern ]] || fail "Edge host must be a safe label."
-}
-
-load_restic_profile() {
-  local profile=$1 restic_env key value
-  [[ $profile =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || fail "Invalid restic profile."
-  restic_env="$telemetry_dir/.env.restic.$profile"
-  [[ -f $restic_env ]] || fail "Missing restic profile: $profile"
-  while IFS='=' read -r key value; do
-    case "$key" in
-    RESTIC_REPOSITORY | RESTIC_PASSWORD | B2_ACCOUNT_ID | B2_ACCOUNT_KEY)
-      value=$(resolved_config_value "$key" "$value")
-      printf -v "$key" '%s' "$value"
-      export "${key?}"
-      ;;
-    BACKUP_RETENTION_DAYS)
-      [[ $value =~ ^[1-9][0-9]{0,4}$ && $value -le 36500 ]] || fail "BACKUP_RETENTION_DAYS must be 1..36500."
-      export BACKUP_RETENTION_DAYS=$value
-      ;;
-    '' | '#'*) ;;
-    *) fail "Unsupported key in restic profile: $key" ;;
-    esac
-  done <"$restic_env"
-}
-
-validate_restic_config() {
-  [[ ${RESTIC_REPOSITORY:-} == sftp:* || ${RESTIC_REPOSITORY:-} == b2:* ]] || fail "Restic repository must use SFTP or B2."
-  [[ ${#RESTIC_PASSWORD} -ge 24 ]] || fail "Restic password must be at least 24 characters."
-}
-
-studio_compose() {
-  local pattern
-  pattern=$(collector_redaction_pattern)
-  AGENT_TELEMETRY_REDACT_PATTERN=$pattern docker_command compose --env-file "$studio_env" --project-directory "$telemetry_dir" \
-    -f "${HNET_TELEMETRY_RESOURCES:-$telemetry_dir}/compose.mac-studio.yml" "$@"
-}
-
-edge_compose() {
-  local pattern
-  pattern=$(collector_redaction_pattern)
-  AGENT_TELEMETRY_REDACT_PATTERN=$pattern docker_command compose --env-file "$edge_env" --project-directory "$telemetry_dir" \
-    -f "${HNET_TELEMETRY_RESOURCES:-$telemetry_dir}/compose.edge.yml" "$@"
-}
-
-grafana_health_url() {
-  echo "http://127.0.0.1:$GRAFANA_PORT/api/health"
-}
-
-wait_for_grafana() {
-  local attempt health_url
-  health_url=$(grafana_health_url)
-  for ((attempt = 1; attempt <= 60; attempt++)); do
-    curl --fail --silent --max-time 5 "$health_url" >/dev/null && return
-    sleep 5
-  done
-  fail "Grafana did not become healthy."
-}
-
-studio_preflight() {
-  ensure_docker
-  load_studio_config resolve
-  validate_studio_public_config
-  validate_studio_secrets
-  mkdir -p "$telemetry_dir/backups"
-  studio_compose config --quiet
-}
-
-studio_observe_preflight() {
-  require_running_docker
-  load_studio_config public
-  validate_studio_public_config
-  studio_compose config --quiet
-}
-
-studio_runtime_preflight() {
-  ensure_docker
-  load_studio_config public
-  validate_studio_public_config
-  mkdir -p "$telemetry_dir/backups"
-  studio_compose config --quiet
-}
-
-studio_start() {
-  local AGENT_TELEMETRY_REDACT_PATTERN=${AGENT_TELEMETRY_REDACT_PATTERN:-}
-  studio_preflight
-  require_command curl
-  studio_compose pull
-  studio_compose up -d
-  wait_for_grafana
-}
-
-studio_serve() {
-  local grafana_target gateway_target mini_1_gateway_target mini_2_gateway_target health_url
-  studio_runtime_preflight
-  require_command curl
-  health_url=$(grafana_health_url)
-  curl --fail --silent --max-time 5 "$health_url" >/dev/null
-  grafana_target="http://127.0.0.1:$GRAFANA_PORT"
-  gateway_target="http://127.0.0.1:$GATEWAY_PORT"
-  mini_1_gateway_target="http://127.0.0.1:$GATEWAY_PORT_MAC_MINI_1"
-  mini_2_gateway_target="http://127.0.0.1:$GATEWAY_PORT_MAC_MINI_2"
-  tailscale_command serve --yes --bg --https=443 "$grafana_target"
-  tailscale_command serve --yes --bg --https=4318 "$gateway_target"
-  tailscale_command serve --yes --bg --https=4319 "$mini_1_gateway_target"
-  tailscale_command serve --yes --bg --https=4320 "$mini_2_gateway_target"
-  tailscale_command serve status
+initialize_operator_config() {
+  cluster_namespace=${HNET_KUBE_NAMESPACE:-telemetry}
+  cluster_release=${HNET_HELM_RELEASE:-hnet-telemetry}
+  cluster_secret=${HNET_KUBE_SECRET:-hnet-telemetry-secrets}
+  kube_runtime=${HNET_KUBE_RUNTIME:-orbstack}
+  kube_context=${HNET_KUBE_CONTEXT:-}
+  kubeconfig=${HNET_KUBECONFIG:-}
+  mprocs_config=${HNET_MPROCS_CONFIG:-"$ops_dir/mprocs/hnet.yaml"}
+  mprocs_log_dir=${HNET_MPROCS_LOG_DIR:-"$ops_dir/../tmp/mprocs"}
 }
 
 studio_status() {
@@ -401,10 +162,35 @@ studio_dashboard_refresh() {
   docker_command start --attach "$container"
 }
 
-new_backup_name() {
-  local timestamp
-  timestamp=$(date -u +%Y%m%dT%H%M%SZ)
-  echo "telemetry-$timestamp"
+studio_observe_preflight() {
+  require_running_docker
+  load_studio_config public
+  validate_studio_public_config
+  studio_compose config --quiet
+}
+
+studio_backup() {
+  studio_runtime_preflight
+  create_studio_backup "${2:-}"
+}
+
+studio_archive() {
+  local profile name
+  profile=${2:-}
+  name=${3:-}
+  [[ -n $profile ]] || fail "Archive requires a restic profile."
+  [[ -n $name ]] || name=$(new_backup_name)
+  load_restic_profile "$profile"
+  validate_restic_config
+  ensure_studio_backup "$name"
+  HNET_BACKUP_DIR="$telemetry_dir/backups" bash "${HNET_TELEMETRY_RESOURCES:-$telemetry_dir}/restic-backup.sh" "$name"
+}
+
+ensure_studio_backup() {
+  local name=${1:?}
+  [[ -d $telemetry_dir/backups/$name ]] && return 0
+  studio_runtime_preflight
+  create_studio_backup "$name"
 }
 
 create_studio_backup() {
@@ -419,25 +205,10 @@ create_studio_backup() {
   echo "$telemetry_dir/backups/$name"
 }
 
-studio_backup() {
-  studio_runtime_preflight
-  create_studio_backup "${2:-}"
-}
-
-studio_archive() {
-  local profile name backup_path
-  profile=${2:-}
-  name=${3:-}
-  [[ -n $profile ]] || fail "Archive requires a restic profile."
-  [[ -n $name ]] || name=$(new_backup_name)
-  load_restic_profile "$profile"
-  validate_restic_config
-  backup_path="$telemetry_dir/backups/$name"
-  if [[ ! -d $backup_path ]]; then
-    studio_runtime_preflight
-    create_studio_backup "$name"
-  fi
-  HNET_BACKUP_DIR="$telemetry_dir/backups" bash "${HNET_TELEMETRY_RESOURCES:-$telemetry_dir}/restic-backup.sh" "$name"
+new_backup_name() {
+  local timestamp
+  timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+  echo "telemetry-$timestamp"
 }
 
 studio_retention() {
@@ -464,19 +235,36 @@ restic_init() {
   restic init
 }
 
-edge_preflight() {
-  load_edge_config
-  validate_edge_config
-  edge_compose config --quiet
+load_restic_profile() {
+  local profile=${1:?} restic_env key value
+  [[ $profile =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || fail "Invalid restic profile."
+  restic_env="$telemetry_dir/.env.restic.$profile"
+  [[ -f $restic_env ]] || fail "Missing restic profile: $profile"
+  while IFS='=' read -r key value; do
+    case "$key" in
+    RESTIC_REPOSITORY | RESTIC_PASSWORD | B2_ACCOUNT_ID | B2_ACCOUNT_KEY)
+      value=$(resolved_config_value "$key" "$value")
+      printf -v "$key" '%s' "$value"
+      export "${key?}"
+      ;;
+    BACKUP_RETENTION_DAYS)
+      set_backup_retention_days "$value"
+      ;;
+    '' | '#'*) ;;
+    *) fail "Unsupported key in restic profile: $key" ;;
+    esac
+  done <"$restic_env"
 }
 
-edge_start() {
-  local AGENT_TELEMETRY_REDACT_PATTERN=${AGENT_TELEMETRY_REDACT_PATTERN:-}
-  ensure_docker
-  edge_preflight
-  edge_compose pull
-  edge_compose up -d
-  edge_compose ps
+set_backup_retention_days() {
+  local value=${1:?}
+  [[ $value =~ ^[1-9][0-9]{0,4}$ && $value -le 36500 ]] || fail "BACKUP_RETENTION_DAYS must be 1..36500."
+  export BACKUP_RETENTION_DAYS=$value
+}
+
+validate_restic_config() {
+  [[ ${RESTIC_REPOSITORY:-} == sftp:* || ${RESTIC_REPOSITORY:-} == b2:* ]] || fail "Restic repository must use SFTP or B2."
+  [[ ${#RESTIC_PASSWORD} -ge 24 ]] || fail "Restic password must be at least 24 characters."
 }
 
 edge_status() {
@@ -491,21 +279,21 @@ edge_logs() {
   edge_compose logs --tail 200 collector
 }
 
-shell_security() {
-  "${HNET_SECURITY_BIN:-/usr/bin/security}" "$@"
+require_running_docker() {
+  docker_bin=$(resolve_docker_bin || true)
+  docker_ready || fail "Docker is unavailable; start it explicitly before running this command."
 }
 
-shell_keychain() {
-  printf '%s' "${HNET_SHELL_KEYCHAIN:-$HOME/Library/Keychains/login.keychain-db}"
-}
-
-shell_keychain_quoted() {
-  local keychain
-  keychain=$(shell_keychain)
-  [[ $keychain != *$'\n'* ]] || fail "Unsupported login Keychain location."
-  [[ $keychain != *$'\r'* ]] || fail "Unsupported login Keychain location."
-  keychain=${keychain//\\/\\\\}
-  printf '%s' "${keychain//\"/\\\"}"
+shell_enable() {
+  set +x
+  [[ $(uname -s) == Darwin ]] || fail "Automatic shell setup requires macOS login Keychain."
+  shell_startup_preflight
+  load_edge_config
+  validate_edge_config
+  shell_store_token
+  shell_install_startup
+  echo "Shell token verified in login Keychain; automatic startup enabled."
+  echo "Open a new terminal to begin collecting shell metadata."
 }
 
 shell_store_token() {
@@ -521,9 +309,13 @@ shell_store_token() {
   [[ $stored_token == "$AGENT_TELEMETRY_INGEST_TOKEN" ]] || fail "Login Keychain token verification failed."
 }
 
-shell_startup_entry() {
-  local client=${HNET_SHELL_STARTUP_CLIENT:-"$ops_dir/clients/zsh/auto.zsh"}
-  printf 'if [[ -r %q ]]; then source %q; fi' "$client" "$client"
+shell_keychain_quoted() {
+  local keychain
+  keychain=$(shell_keychain)
+  [[ $keychain != *$'\n'* ]] || fail "Unsupported login Keychain location."
+  [[ $keychain != *$'\r'* ]] || fail "Unsupported login Keychain location."
+  keychain=${keychain//\\/\\\\}
+  printf '%s' "${keychain//\"/\\\"}"
 }
 
 shell_startup_preflight() {
@@ -546,16 +338,15 @@ shell_install_startup() {
   printf '\n# >>> hnet zsh >>>\n%s\n# <<< hnet zsh <<<\n' "$entry" >>"$startup"
 }
 
-shell_enable() {
-  set +x
-  [[ $(uname -s) == Darwin ]] || fail "Automatic shell setup requires macOS login Keychain."
-  shell_startup_preflight
-  load_edge_config
-  validate_edge_config
-  shell_store_token
-  shell_install_startup
-  echo "Shell token verified in login Keychain; automatic startup enabled."
-  echo "Open a new terminal to begin collecting shell metadata."
+codex_enable() {
+  local config
+  config=$(codex_config_file)
+  require_command codex
+  shell_status
+  codex_validate_config
+  codex_install_config "$config"
+  codex_validate_config
+  echo "Codex local telemetry configured; open a new terminal to load its launchers."
 }
 
 shell_status() {
@@ -569,22 +360,14 @@ shell_status() {
   echo "Login Keychain token present; automatic shell startup installed."
 }
 
-codex_config_file() {
-  printf '%s' "${HNET_CODEX_CONFIG:-${CODEX_HOME:-$HOME/.codex}/config.toml}"
+shell_startup_entry() {
+  local client=${HNET_SHELL_STARTUP_CLIENT:-"$ops_dir/clients/zsh/auto.zsh"}
+  printf 'if [[ -r %q ]]; then source %q; fi' "$client" "$client"
 }
 
 codex_validate_config() {
   command codex app-server --print-startup-config --strict-config >/dev/null 2>&1 ||
     fail "Codex rejected its configuration; inspect the marked hnet block locally."
-}
-
-codex_require_local_config() {
-  local config block expected
-  config=$(codex_config_file)
-  [[ -f $config ]] || fail "Enable Codex telemetry with hnetctl codex-enable first."
-  block=$(sed -n '/^# >>> hnet codex >>>$/,/^# <<< hnet codex <<<$/p' "$config" | sed '1d;$d')
-  expected=$(<"$ops_dir/clients/codex/config.toml")
-  [[ $block == "$expected" ]] || fail "Codex hnet exporter settings differ from the local template."
 }
 
 codex_install_config() {
@@ -612,43 +395,10 @@ codex_append_config() {
   } >>"$config"
 }
 
-codex_enable() {
-  local config
-  config=$(codex_config_file)
-  require_command codex
-  shell_status
-  codex_validate_config
-  codex_install_config "$config"
-  codex_validate_config
-  echo "Codex local telemetry configured; open a new terminal to load its launchers."
-}
-
-codex_auth_environment() {
-  codex_require_local_config
-  agent_auth_environment
-}
-
-agent_auth_environment() {
-  local token keychain header_name
-  keychain=$(shell_keychain)
-  token=$(shell_security find-generic-password -a local -s hnet.zsh.ingest \
-    -w "$keychain" 2>/dev/null) || fail "Unlock login Keychain before launching an agent with hnet."
-  validate_token 'Keychain ingestion token' "$token"
-  for header_name in OTEL_EXPORTER_OTLP_HEADERS OTEL_EXPORTER_OTLP_LOGS_HEADERS \
-    OTEL_EXPORTER_OTLP_TRACES_HEADERS OTEL_EXPORTER_OTLP_METRICS_HEADERS; do
-    printf -v "$header_name" 'Authorization=Bearer %s' "$token"
-    export "${header_name?}"
-  done
-  export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
-  export OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://127.0.0.1:4318/v1/logs
-  export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces
-  export OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://127.0.0.1:4318/v1/metrics
-}
-
 codex_launch() {
   set +x
   codex_auth_environment
-  command codex "$@"
+  command codex --no-daemon "$@"
 }
 
 codex_app_launch() {
@@ -663,6 +413,24 @@ desktop_agent_launch() {
   desktop_require_stopped "$app"
   codex_auth_environment
   open -a "$app"
+}
+
+codex_auth_environment() {
+  codex_require_local_config
+  agent_auth_environment
+}
+
+codex_require_local_config() {
+  local config block expected
+  config=$(codex_config_file)
+  [[ -f $config ]] || fail "Enable Codex telemetry with hnetctl codex-enable first."
+  block=$(sed -n '/^# >>> hnet codex >>>$/,/^# <<< hnet codex <<<$/p' "$config" | sed '1d;$d')
+  expected=$(<"$ops_dir/clients/codex/config.toml")
+  [[ $block == "$expected" ]] || fail "Codex hnet exporter settings differ from the local template."
+}
+
+codex_config_file() {
+  printf '%s' "${HNET_CODEX_CONFIG:-${CODEX_HOME:-$HOME/.codex}/config.toml}"
 }
 
 desktop_require_stopped() {
@@ -687,6 +455,97 @@ claude_launch() {
   command claude "$@"
 }
 
+agent_auth_environment() {
+  local token keychain header_name
+  keychain=$(shell_keychain)
+  token=$(shell_security find-generic-password -a local -s hnet.zsh.ingest \
+    -w "$keychain" 2>/dev/null) || fail "Unlock login Keychain before launching an agent with hnet."
+  validate_token 'Keychain ingestion token' "$token"
+  for header_name in OTEL_EXPORTER_OTLP_HEADERS OTEL_EXPORTER_OTLP_LOGS_HEADERS \
+    OTEL_EXPORTER_OTLP_TRACES_HEADERS OTEL_EXPORTER_OTLP_METRICS_HEADERS; do
+    printf -v "$header_name" 'Authorization=Bearer %s' "$token"
+    export "${header_name?}"
+  done
+  export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+  export OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://127.0.0.1:4318/v1/logs
+  export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces
+  export OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://127.0.0.1:4318/v1/metrics
+}
+
+shell_security() {
+  "${HNET_SECURITY_BIN:-/usr/bin/security}" "$@"
+}
+
+shell_keychain() {
+  printf '%s' "${HNET_SHELL_KEYCHAIN:-$HOME/Library/Keychains/login.keychain-db}"
+}
+
+cluster_lint() {
+  helm_command lint "$telemetry_dir"
+}
+
+cluster_template() {
+  helm_chart_command template "$cluster_release" "$telemetry_dir" --namespace "$cluster_namespace"
+}
+
+cluster_status() {
+  case "$kube_runtime" in
+  orbstack) use_orbstack_kube_defaults ;;
+  none) ;;
+  *) fail "Unsupported HNET_KUBE_RUNTIME: $kube_runtime" ;;
+  esac
+  kubectl_command get --raw=/readyz --request-timeout=5s >/dev/null ||
+    fail "Kubernetes is unavailable; start it explicitly before checking status."
+  kubectl_command --namespace "$cluster_namespace" \
+    get statefulsets,deployments,pods,services,persistentvolumeclaims
+}
+
+k9s_open() {
+  local args=() resource
+  resource=${2:-pods}
+  ensure_kubernetes
+  require_command k9s
+  [[ -n $kubeconfig ]] && args+=(--kubeconfig "$kubeconfig")
+  [[ -n $kube_context ]] && args+=(--context "$kube_context")
+  args+=(--namespace "$cluster_namespace" --command "$resource")
+  k9s "${args[@]}"
+}
+
+operator_mprocs() {
+  operator_up
+  require_command mprocs
+  [[ -f $mprocs_config ]] || fail "Missing mprocs config: $mprocs_config"
+  mkdir -p "$mprocs_log_dir"
+  mprocs --config "$mprocs_config" --proc-list-title hnet \
+    --log-dir "$mprocs_log_dir" --log-mode append
+}
+
+operator_up() {
+  cluster_bootstrap
+  bootstrap
+}
+
+cluster_bootstrap() {
+  cluster_secrets
+  cluster_install
+}
+
+cluster_install() {
+  local allow_restart=true
+  ensure_kubernetes "$allow_restart"
+  helm_chart_command upgrade --install "$cluster_release" "$telemetry_dir" \
+    --namespace "$cluster_namespace" --create-namespace "$@"
+}
+
+helm_chart_command() {
+  load_studio_config public
+  if [[ -n ${HNET_KUBE_SECRET:-} ]]; then
+    set -- "$@" --set-string "secret.existingName=$cluster_secret"
+  fi
+  set -- "$@" --set-json "clients=$clients_json"
+  helm_command "$@"
+}
+
 helm_command() {
   local args=()
   require_command helm
@@ -698,6 +557,120 @@ helm_command() {
   else
     helm "$@"
   fi
+}
+
+helm_command_args() {
+  [[ -n $kubeconfig ]] && printf '%s\0%s\0' --kubeconfig "$kubeconfig"
+  [[ -n $kube_context ]] && printf '%s\0%s\0' --kube-context "$kube_context"
+}
+
+cluster_secrets() {
+  local AGENT_TELEMETRY_REDACT_PATTERN=${AGENT_TELEMETRY_REDACT_PATTERN:-} allow_restart=true
+  ensure_kubernetes "$allow_restart"
+  load_studio_config resolve
+  validate_studio_public_config
+  validate_studio_secrets
+
+  kubectl_command create namespace "$cluster_namespace" \
+    --dry-run=client -o yaml | kubectl_command apply -f -
+
+  apply_cluster_secret
+}
+
+apply_cluster_secret() (
+  local tmp_env=
+
+  # shellcheck disable=SC2329 # Invoked by the EXIT trap.
+  cleanup_secret_env() {
+    [[ -z $tmp_env ]] || rm -f "$tmp_env"
+  }
+
+  trap cleanup_secret_env EXIT
+  tmp_env=$(mktemp "${TMPDIR:-/tmp}/hnet-kube-secrets.XXXXXX")
+  chmod 600 "$tmp_env"
+  write_cluster_secret_env >"$tmp_env"
+
+  kubectl_command --namespace "$cluster_namespace" create secret generic "$cluster_secret" \
+    --from-env-file="$tmp_env" --dry-run=client -o yaml |
+    kubectl_command apply -f -
+)
+
+write_cluster_secret_env() {
+  printf 'CLICKHOUSE_PASSWORD=%s\n' "$CLICKHOUSE_PASSWORD"
+  printf 'GRAFANA_CLICKHOUSE_PASSWORD=%s\n' "$GRAFANA_CLICKHOUSE_PASSWORD"
+  printf 'GF_SECURITY_ADMIN_USER=%s\n' "$GF_SECURITY_ADMIN_USER"
+  printf 'GF_SECURITY_ADMIN_PASSWORD=%s\n' "$GF_SECURITY_ADMIN_PASSWORD"
+  write_cluster_client_tokens
+  printf 'AGENT_TELEMETRY_REDACT_PATTERN=%s\n' "$(collector_redaction_pattern)"
+}
+
+ensure_kubernetes() {
+  local allow_restart=${1:-false}
+  case "$kube_runtime" in
+  orbstack) ensure_orbstack_kubernetes "$allow_restart" ;;
+  none) return 0 ;;
+  *) fail "Unsupported HNET_KUBE_RUNTIME: $kube_runtime" ;;
+  esac
+}
+
+ensure_orbstack_kubernetes() {
+  local allow_restart=${1:-false}
+  require_command orbctl
+  require_command kubectl
+  local enable_kubernetes=true
+  orbstack_kubernetes_enabled || orbctl config set k8s.enable "$enable_kubernetes"
+  orbctl start
+  orbctl start k8s
+  use_orbstack_kube_defaults
+
+  wait_for_orbstack_kubernetes && return
+  if [[ $allow_restart == true ]]; then
+    restart_orbstack_kubernetes
+    wait_for_orbstack_kubernetes && return
+  fi
+
+  fail "OrbStack Kubernetes did not become ready; expected kubeconfig at $kubeconfig."
+}
+
+restart_orbstack_kubernetes() {
+  echo "Restarting OrbStack to apply Kubernetes enablement..."
+  orbctl stop
+  orbctl start
+  orbctl start k8s
+}
+
+use_orbstack_kube_defaults() {
+  [[ $kube_runtime == orbstack ]] || return
+  [[ -n $kube_context ]] || kube_context=orbstack
+  [[ -n $kubeconfig ]] || kubeconfig=$(orbstack_kubeconfig)
+}
+
+orbstack_kubeconfig() {
+  printf '%s' "$HOME/.orbstack/k8s/config.yml"
+}
+
+orbstack_kubernetes_enabled() {
+  local line
+  while IFS= read -r line; do
+    [[ $line == "k8s.enable: true" ]] && return 0
+  done < <(orbctl config show 2>/dev/null || true)
+  return 1
+}
+
+wait_for_orbstack_kubernetes() {
+  local attempt
+  for ((attempt = 1; attempt <= 60; attempt++)); do
+    if orbstack_kubernetes_ready; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+orbstack_kubernetes_ready() {
+  [[ -f $kubeconfig ]] || return 1
+  kubectl_command get --raw=/readyz >/dev/null 2>&1
 }
 
 kubectl_command() {
@@ -713,133 +686,9 @@ kubectl_command() {
   fi
 }
 
-ensure_orbstack_kubernetes() {
-  local allow_restart=${1:-false}
-  require_command orbctl
-  require_command kubectl
-  orbstack_kubernetes_enabled || orbctl config set k8s.enable true
-  orbctl start
-  orbctl start k8s
-  use_orbstack_kube_defaults
-
-  wait_for_orbstack_kubernetes && return
-  if [[ $allow_restart == true ]]; then
-    echo "Restarting OrbStack to apply Kubernetes enablement..."
-    orbctl stop
-    orbctl start
-    orbctl start k8s
-    wait_for_orbstack_kubernetes && return
-  fi
-
-  fail "OrbStack Kubernetes did not become ready; expected kubeconfig at $kubeconfig."
-}
-
-wait_for_orbstack_kubernetes() {
-  local attempt
-  for ((attempt = 1; attempt <= 60; attempt++)); do
-    if [[ -f $kubeconfig ]] &&
-      kubectl_command get --raw=/readyz >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 2
-  done
-  return 1
-}
-
-ensure_kubernetes() {
-  local allow_restart=${1:-false}
-  case "$kube_runtime" in
-  orbstack) ensure_orbstack_kubernetes "$allow_restart" ;;
-  none) return 0 ;;
-  *) fail "Unsupported HNET_KUBE_RUNTIME: $kube_runtime" ;;
-  esac
-}
-
-cluster_lint() {
-  helm_command lint "$telemetry_dir"
-}
-
-helm_chart_command() {
-  if [[ -n ${HNET_KUBE_SECRET:-} ]]; then
-    set -- "$@" --set-string "secret.existingName=$cluster_secret"
-  fi
-  helm_command "$@"
-}
-
-cluster_template() {
-  helm_chart_command template "$cluster_release" "$telemetry_dir" --namespace "$cluster_namespace"
-}
-
-cluster_install() {
-  ensure_kubernetes true
-  helm_chart_command upgrade --install "$cluster_release" "$telemetry_dir" \
-    --namespace "$cluster_namespace" --create-namespace "$@"
-}
-
-cluster_status() {
-  case "$kube_runtime" in
-  orbstack) use_orbstack_kube_defaults ;;
-  none) ;;
-  *) fail "Unsupported HNET_KUBE_RUNTIME: $kube_runtime" ;;
-  esac
-  kubectl_command get --raw=/readyz --request-timeout=5s >/dev/null ||
-    fail "Kubernetes is unavailable; start it explicitly before checking status."
-  kubectl_command --namespace "$cluster_namespace" \
-    get statefulsets,deployments,pods,services,persistentvolumeclaims
-}
-
-cluster_secrets() {
-  local AGENT_TELEMETRY_REDACT_PATTERN=${AGENT_TELEMETRY_REDACT_PATTERN:-}
-  ensure_kubernetes true
-  load_studio_config resolve
-  validate_studio_public_config
-  validate_studio_secrets
-
-  kubectl_command create namespace "$cluster_namespace" \
-    --dry-run=client -o yaml | kubectl_command apply -f -
-
-  (
-    local tmp_env=
-
-    # shellcheck disable=SC2329 # Invoked by the EXIT trap.
-    cleanup_secret_env() {
-      [[ -z $tmp_env ]] || rm -f "$tmp_env"
-    }
-
-    trap cleanup_secret_env EXIT
-    tmp_env=$(mktemp "${TMPDIR:-/tmp}/hnet-kube-secrets.XXXXXX")
-    chmod 600 "$tmp_env"
-    {
-      printf 'CLICKHOUSE_PASSWORD=%s\n' "$CLICKHOUSE_PASSWORD"
-      printf 'GRAFANA_CLICKHOUSE_PASSWORD=%s\n' "$GRAFANA_CLICKHOUSE_PASSWORD"
-      printf 'GF_SECURITY_ADMIN_USER=%s\n' "$GF_SECURITY_ADMIN_USER"
-      printf 'GF_SECURITY_ADMIN_PASSWORD=%s\n' "$GF_SECURITY_ADMIN_PASSWORD"
-      printf 'AGENT_TELEMETRY_MAC_STUDIO_TOKEN=%s\n' "$AGENT_TELEMETRY_MAC_STUDIO_TOKEN"
-      printf 'AGENT_TELEMETRY_MAC_MINI_1_TOKEN=%s\n' "$AGENT_TELEMETRY_MAC_MINI_1_TOKEN"
-      printf 'AGENT_TELEMETRY_MAC_MINI_2_TOKEN=%s\n' "$AGENT_TELEMETRY_MAC_MINI_2_TOKEN"
-      printf 'AGENT_TELEMETRY_REDACT_PATTERN=%s\n' "$(collector_redaction_pattern)"
-    } >"$tmp_env"
-
-    kubectl_command --namespace "$cluster_namespace" create secret generic "$cluster_secret" \
-      --from-env-file="$tmp_env" --dry-run=client -o yaml |
-      kubectl_command apply -f -
-  )
-}
-
-cluster_bootstrap() {
-  cluster_secrets
-  cluster_install
-}
-
-k9s_open() {
-  local args=() resource
-  resource=${2:-pods}
-  ensure_kubernetes
-  require_command k9s
-  [[ -n $kubeconfig ]] && args+=(--kubeconfig "$kubeconfig")
-  [[ -n $kube_context ]] && args+=(--context "$kube_context")
-  args+=(--namespace "$cluster_namespace" --command "$resource")
-  k9s "${args[@]}"
+kube_command_args() {
+  [[ -n $kubeconfig ]] && printf '%s\0%s\0' --kubeconfig "$kubeconfig"
+  [[ -n $kube_context ]] && printf '%s\0%s\0' --context "$kube_context"
 }
 
 bootstrap() {
@@ -848,18 +697,301 @@ bootstrap() {
   edge_start
 }
 
-operator_up() {
-  cluster_bootstrap
-  bootstrap
+studio_start() {
+  local AGENT_TELEMETRY_REDACT_PATTERN=${AGENT_TELEMETRY_REDACT_PATTERN:-}
+  studio_preflight
+  require_command curl
+  studio_compose pull
+  studio_compose up -d
+  wait_for_grafana
 }
 
-operator_mprocs() {
-  operator_up
-  require_command mprocs
-  [[ -f $mprocs_config ]] || fail "Missing mprocs config: $mprocs_config"
-  mkdir -p "$mprocs_log_dir"
-  mprocs --config "$mprocs_config" --proc-list-title hnet \
-    --log-dir "$mprocs_log_dir" --log-mode append
+wait_for_grafana() {
+  local attempt health_url
+  health_url=$(grafana_health_url)
+  for ((attempt = 1; attempt <= 60; attempt++)); do
+    curl --fail --silent --max-time 5 "$health_url" >/dev/null && return
+    sleep 5
+  done
+  fail "Grafana did not become healthy."
+}
+
+studio_preflight() {
+  ensure_docker
+  load_studio_config resolve
+  validate_studio_public_config
+  validate_studio_secrets
+  mkdir -p "$telemetry_dir/backups"
+  studio_compose config --quiet
+}
+
+validate_studio_secrets() {
+  validate_redaction_pattern
+  local admin_password=${GF_SECURITY_ADMIN_PASSWORD:-}
+  local writer_password=${CLICKHOUSE_PASSWORD:-}
+  local reader_password=${GRAFANA_CLICKHOUSE_PASSWORD:-}
+  [[ ${#admin_password} -ge 24 ]] || fail "Grafana administrator password must be at least 24 characters."
+  [[ ${#writer_password} -ge 24 ]] || fail "ClickHouse writer password must be at least 24 characters."
+  [[ ${#reader_password} -ge 24 ]] || fail "ClickHouse reader password must be at least 24 characters."
+  [[ $writer_password != "$reader_password" ]] || fail "ClickHouse writer and reader passwords must differ."
+  resolve_client_tokens
+}
+
+studio_serve() {
+  local grafana_target health_url
+  studio_runtime_preflight
+  require_command curl
+  health_url=$(grafana_health_url)
+  curl --fail --silent --max-time 5 "$health_url" >/dev/null
+  grafana_target="http://127.0.0.1:$GRAFANA_PORT"
+  tailscale_command serve --yes --bg --https=443 "$grafana_target"
+  serve_client_gateways
+  tailscale_command serve status
+}
+
+tailscale_command() {
+  local app_cli=/Applications/Tailscale.app/Contents/MacOS/Tailscale
+  if command -v tailscale >/dev/null 2>&1; then
+    command tailscale "$@"
+    return
+  fi
+  [[ -x $app_cli ]] || fail "Missing Tailscale CLI and macOS app."
+  "$app_cli" "$@"
+}
+
+grafana_health_url() {
+  echo "http://127.0.0.1:$GRAFANA_PORT/api/health"
+}
+
+studio_runtime_preflight() {
+  ensure_docker
+  load_studio_config public
+  validate_studio_public_config
+  mkdir -p "$telemetry_dir/backups"
+  studio_compose config --quiet
+}
+
+load_studio_config() {
+  local secret_mode=${1:-resolve}
+  [[ -f $studio_env ]] || fail "Missing $studio_env; copy .env.mac-studio.example first."
+  while IFS='=' read -r key value; do
+    load_studio_setting "$secret_mode" "$key" "$value"
+  done <"$studio_env"
+  # shellcheck source=ops/apps/hnetctl/clients.sh
+  source "$app_dir/clients.sh"
+  load_client_inventory
+}
+
+load_studio_setting() {
+  local secret_mode=${1:?} key=${2:-} value=${3:-}
+  case "$key" in
+  GATEWAY_PORT | GATEWAY_PORT_MAC_MINI_1 | GATEWAY_PORT_MAC_MINI_2 | GATEWAY_PORT_MACBOOK | GRAFANA_PORT | TAILSCALE_DNS_NAME | GF_SECURITY_ADMIN_USER | TELEMETRY_TTL | HNET_CLIENTS_FILE)
+    value=$(resolved_config_value "$key" "$value")
+    printf -v "$key" '%s' "$value"
+    export "${key?}"
+    ;;
+  GF_SECURITY_ADMIN_PASSWORD | CLICKHOUSE_PASSWORD | GRAFANA_CLICKHOUSE_PASSWORD | AGENT_TELEMETRY_REDACT_PATTERN)
+    [[ $secret_mode == resolve ]] || return 0
+    value=$(resolved_config_value "$key" "$value")
+    printf -v "$key" '%s' "$value"
+    export "${key?}"
+    ;;
+  AGENT_TELEMETRY_MAC_STUDIO_TOKEN | AGENT_TELEMETRY_MAC_MINI_1_TOKEN | AGENT_TELEMETRY_MAC_MINI_2_TOKEN | AGENT_TELEMETRY_MACBOOK_TOKEN) ;;
+  '' | '#'*) ;;
+  *) fail "Unsupported key in $studio_env: $key" ;;
+  esac
+}
+
+validate_studio_public_config() {
+  valid_port "${GRAFANA_PORT:-}" || fail "GRAFANA_PORT must be between 1024 and 65535."
+  [[ ${TAILSCALE_DNS_NAME:-} =~ ^[A-Za-z0-9][A-Za-z0-9.-]*\.ts\.net$ ]] || fail "TAILSCALE_DNS_NAME must be a ts.net name."
+  [[ ${GF_SECURITY_ADMIN_USER:-} =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || fail "Grafana administrator name is invalid."
+  [[ ${TELEMETRY_TTL:-} =~ ^[0-9]+[smhd]$ ]] || fail "TELEMETRY_TTL must use s, m, h, or d."
+  validate_client_inventory
+}
+
+studio_compose() (
+  local pattern overlay
+  overlay=$(mktemp "${TMPDIR:-/tmp}/hnet-compose.XXXXXX")
+  trap 'rm -f "$overlay"' EXIT
+  client_compose_overlay >"$overlay"
+  pattern=$(collector_redaction_pattern)
+  AGENT_TELEMETRY_REDACT_PATTERN=$pattern docker_command compose --env-file "$studio_env" --project-directory "$telemetry_dir" \
+    -f "${HNET_TELEMETRY_RESOURCES:-$telemetry_dir}/compose.mac-studio.yml" -f "$overlay" "$@"
+)
+
+edge_start() {
+  local AGENT_TELEMETRY_REDACT_PATTERN=${AGENT_TELEMETRY_REDACT_PATTERN:-}
+  ensure_docker
+  edge_preflight
+  edge_compose pull
+  edge_compose up -d
+  edge_compose ps
+}
+
+edge_preflight() {
+  load_edge_config
+  validate_edge_config
+  edge_compose config --quiet
+}
+
+load_edge_config() {
+  [[ -f $edge_env ]] || fail "Missing $edge_env; copy .env.edge.example first."
+  while IFS='=' read -r key value; do
+    case "$key" in
+    AGENT_TELEMETRY_UPSTREAM | AGENT_TELEMETRY_HOST | AGENT_TELEMETRY_INGEST_TOKEN | AGENT_TELEMETRY_REDACT_PATTERN)
+      value=$(resolved_config_value "$key" "$value")
+      printf -v "$key" '%s' "$value"
+      export "${key?}"
+      ;;
+    '' | '#'*) ;;
+    *) fail "Unsupported key in $edge_env: $key" ;;
+    esac
+  done <"$edge_env"
+}
+
+resolved_config_value() {
+  local key=${1:?} value=${2-} current
+  current=${!key:-}
+  if [[ -n $current ]]; then
+    printf '%s' "$current"
+    return
+  fi
+  if [[ $value == op://* ]]; then
+    require_command op
+    op read "$value"
+    return
+  fi
+  printf '%s' "$value"
+}
+
+validate_edge_config() {
+  validate_redaction_pattern
+  validate_edge_destination
+  validate_token AGENT_TELEMETRY_INGEST_TOKEN "${AGENT_TELEMETRY_INGEST_TOKEN:-}"
+}
+
+validate_redaction_pattern() {
+  AGENT_TELEMETRY_REDACT_PATTERN=${AGENT_TELEMETRY_REDACT_PATTERN:-a^}
+  valid_redaction_pattern "$AGENT_TELEMETRY_REDACT_PATTERN" ||
+    fail 'Personal matches must be single-line \Qliteral\E entries separated by |, optionally prefixed with (?i).'
+  export AGENT_TELEMETRY_REDACT_PATTERN
+}
+
+valid_redaction_pattern() {
+  local remaining=${1-} literal
+  [[ $remaining != *$'\n'* && $remaining != *$'\r'* ]] || return 1
+  [[ $remaining != 'a^' ]] || return 0
+  remaining=${remaining#'(?i)'}
+  while [[ $remaining == '\Q'* ]]; do
+    remaining=${remaining#'\Q'}
+    [[ $remaining == *'\E'* ]] || return 1
+    literal=${remaining%%'\E'*}
+    [[ -n $literal ]] || return 1
+    remaining=${remaining#*'\E'}
+    [[ -n $remaining ]] || return 0
+    [[ $remaining == '|'* ]] || return 1
+    remaining=${remaining#'|'}
+  done
+  return 1
+}
+
+validate_token() {
+  local token_name=${1:?} token=${2-}
+  [[ ${#token} -ge 32 ]] || fail "$token_name must be at least 32 characters."
+  [[ $token =~ ^[A-Za-z0-9._~-]+$ ]] || fail "$token_name contains unsupported characters."
+}
+
+validate_edge_destination() {
+  local upstream_pattern='^https://[A-Za-z0-9][A-Za-z0-9.-]*\.ts\.net:([0-9]+)$'
+  local label_pattern='^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$'
+  [[ ${AGENT_TELEMETRY_UPSTREAM:-} =~ $upstream_pattern ]] || fail "Edge upstream must be a central Tailscale HTTPS endpoint with a port."
+  valid_port "${AGENT_TELEMETRY_UPSTREAM##*:}" || fail "Edge upstream port must be between 1024 and 65535."
+  [[ ${AGENT_TELEMETRY_UPSTREAM##*:} != 13133 ]] || fail "Edge upstream cannot use the collector health port."
+  [[ ${AGENT_TELEMETRY_HOST:-} =~ $label_pattern ]] || fail "Edge host must be a safe label."
+}
+
+valid_port() {
+  [[ $1 =~ ^[0-9]+$ ]] && ((10#${1} >= 1024 && 10#${1} <= 65535))
+}
+
+edge_compose() {
+  local pattern
+  pattern=$(collector_redaction_pattern)
+  AGENT_TELEMETRY_REDACT_PATTERN=$pattern docker_command compose --env-file "$edge_env" --project-directory "$telemetry_dir" \
+    -f "${HNET_TELEMETRY_RESOURCES:-$telemetry_dir}/compose.edge.yml" "$@"
+}
+
+docker_command() {
+  [[ -n $docker_bin ]] || ensure_docker
+  "$docker_bin" "$@"
+}
+
+ensure_docker() {
+  local attempt
+  docker_bin=$(resolve_docker_bin || true)
+  docker_ready || start_docker_app
+  for ((attempt = 1; attempt <= 45; attempt++)); do
+    docker_bin=$(resolve_docker_bin || true)
+    docker_ready && return
+    sleep 2
+  done
+  fail "OrbStack or Docker Desktop did not become ready."
+}
+
+resolve_docker_bin() {
+  local candidate
+  for candidate in "$docker_bin" "$(command -v docker 2>/dev/null || true)" \
+    "$HOME/.orbstack/bin/docker" \
+    /Applications/Docker.app/Contents/Resources/bin/docker; do
+    [[ -n $candidate ]] || continue
+    if [[ -x $candidate ]]; then
+      printf '%s' "$candidate"
+      return
+    fi
+  done
+  return 1
+}
+
+start_docker_app() {
+  local app_name
+  if [[ -d /Applications/OrbStack.app ]]; then
+    app_name=OrbStack
+  elif [[ -d /Applications/Docker.app ]]; then
+    app_name=Docker
+  else
+    fail "Install OrbStack or Docker Desktop."
+  fi
+  require_command open
+  open -gj -a "$app_name"
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"
+}
+
+validate_command_availability() {
+  [[ -n ${HNET_PACKAGE_ROOT:-} ]] || return 0
+  case "${1:-}" in
+  cluster-* | k9s | up | mprocs)
+    fail "Use a source checkout for experimental Kubernetes/operator commands; the package supports Compose."
+    ;;
+  esac
+}
+
+fail() {
+  echo "$1" >&2
+  exit "${2:-1}"
+}
+
+docker_ready() {
+  [[ -n $docker_bin ]] && "$docker_bin" info >/dev/null 2>&1
+}
+
+collector_redaction_pattern() {
+  local pattern=${AGENT_TELEMETRY_REDACT_PATTERN:-a^}
+  # Collector configuration expansion consumes dollar escapes, even from env values.
+  printf '%s' "${pattern//\$/\$\$}"
 }
 
 client_command() {
@@ -868,6 +1000,19 @@ client_command() {
   # shellcheck source=ops/apps/hnetctl/client.sh
   source "$app_dir/client.sh"
   "$operation" "$@"
+}
+
+write_cluster_client_tokens() {
+  local key
+  while IFS= read -r key; do
+    printf '%s=%s\n' "$key" "${!key}"
+  done < <(jq -r '.[].tokenEnv' <<<"$clients_json")
+}
+
+client_registration_command() {
+  # shellcheck source=ops/apps/hnetctl/clients.sh
+  source "$app_dir/clients.sh"
+  client_add "$@"
 }
 
 usage() {
@@ -879,88 +1024,9 @@ usage() {
   echo "Edge: edge-start, edge-status, edge-logs"
   echo "Shell: shell-enable, shell-status"
   echo "Agents: codex-enable, codex [ARGS], codex-app, chatgpt-app, claude [ARGS]"
-  echo "Client: client-install, client-check, client-bundle, release-bundle, --version"
+  echo "Client: client-add NAME, client-install, client-check, client-bundle, release-bundle, --version"
   echo "Cluster: cluster-lint, cluster-template, cluster-secrets, cluster-install, cluster-bootstrap, cluster-status, k9s [RESOURCE]"
   echo "Operator: up, mprocs"
 }
 
-if [[ -n ${HNET_PACKAGE_ROOT:-} ]]; then
-  case "${1:-}" in
-  cluster-* | k9s | up | mprocs)
-    fail "Use a source checkout for experimental Kubernetes/operator commands; the package supports Compose."
-    ;;
-  esac
-fi
-
-case "${1:-}" in
---version)
-  [[ $# == 1 ]] || fail "Usage: hnetctl --version"
-  printf 'hnetctl %s\n' "$(<"$ops_dir/../VERSION")"
-  ;;
-release-bundle)
-  shift
-  [[ -r "$app_dir/release.sh" ]] || fail "Build full release previews from a source checkout."
-  # shellcheck source=ops/apps/hnetctl/client.sh
-  source "$app_dir/client.sh"
-  # shellcheck source=ops/apps/hnetctl/release.sh
-  source "$app_dir/release.sh"
-  release_bundle "$@"
-  ;;
-client-install)
-  shift
-  client_command client_install "$@"
-  ;;
-client-check)
-  shift
-  client_command client_check "$@"
-  ;;
-client-bundle)
-  shift
-  client_command client_bundle "$@"
-  ;;
-bootstrap) bootstrap ;;
-start) studio_start ;;
-serve) studio_serve ;;
-status | doctor) studio_status ;;
-dashboard-refresh) studio_dashboard_refresh ;;
-logs) studio_logs "$@" ;;
-restart)
-  studio_restart
-  ;;
-backup) studio_backup "$@" ;;
-archive) studio_archive "$@" ;;
-restic-init) restic_init "$@" ;;
-retention) studio_retention "$@" ;;
-edge-start) edge_start ;;
-edge-status) edge_status ;;
-edge-logs) edge_logs ;;
-shell-enable) shell_enable ;;
-shell-status) shell_status ;;
-codex-enable) codex_enable ;;
-codex)
-  shift
-  codex_launch "$@"
-  ;;
-codex-app) codex_app_launch ;;
-chatgpt-app) desktop_agent_launch ChatGPT ;;
-claude)
-  shift
-  claude_launch "$@"
-  ;;
-cluster-lint) cluster_lint ;;
-cluster-template) cluster_template ;;
-cluster-secrets) cluster_secrets ;;
-cluster-bootstrap) cluster_bootstrap ;;
-cluster-install)
-  shift
-  cluster_install "$@"
-  ;;
-cluster-status) cluster_status ;;
-k9s) k9s_open "$@" ;;
-up) operator_up ;;
-mprocs) operator_mprocs ;;
-*)
-  usage
-  exit 2
-  ;;
-esac
+main "$@"

@@ -19,11 +19,6 @@ Options:
 USAGE
 }
 
-warn() {
-  echo "FAIL: $1" >&2
-  failures=$((failures + 1))
-}
-
 check_command() {
   command -v "$1" >/dev/null 2>&1 || warn "missing command: $1"
 }
@@ -46,20 +41,6 @@ validate_repo() {
 
 repo_key() {
   printf '%s\n' "${1//\//-}"
-}
-
-check_labels() {
-  local actual_labels=$1 label
-  local old_ifs=$IFS
-  IFS=,
-  read -r -a required_labels <<<"$expected_labels"
-  IFS=$old_ifs
-  for label in "${required_labels[@]}"; do
-    case ",$actual_labels," in
-    *,"$label",*) ;;
-    *) warn "runner is missing label '$label'" ;;
-    esac
-  done
 }
 
 check_runner() {
@@ -121,6 +102,25 @@ check_runner() {
   *) warn "runner is not online: $runner_name" ;;
   esac
   check_labels "${runner_line##*$'\t'}"
+}
+
+check_labels() {
+  local actual_labels=$1 label
+  local old_ifs=$IFS
+  IFS=,
+  read -r -a required_labels <<<"$expected_labels"
+  IFS=$old_ifs
+  for label in "${required_labels[@]}"; do
+    case ",$actual_labels," in
+    *,"$label",*) ;;
+    *) warn "runner is missing label '$label'" ;;
+    esac
+  done
+}
+
+warn() {
+  echo "FAIL: $1" >&2
+  failures=$((failures + 1))
 }
 
 while (($# > 0)); do

@@ -14,6 +14,7 @@ main() {
   write_edge_config
   test_enable_is_repeatable_and_keeps_secrets_out_of_startup
   test_codex_enrollment_and_launchers
+  test_codex_terminal_owns_its_runtime
   test_desktop_requires_a_fresh_process
   test_claude_launcher_disables_content_export
   test_existing_codex_telemetry_is_preserved
@@ -87,6 +88,18 @@ test_desktop_requires_a_fresh_process() {
     fail "Desktop launcher reused a running app."
   fi
   [[ $output == *'already running'* ]] || fail "Desktop launch did not stop before reading Keychain."
+}
+
+test_codex_terminal_owns_its_runtime() {
+  local mode expected
+  for mode in resume fork; do
+    "$repo_dir/ops/apps/hnetctl/hnetctl" codex "$mode" --last
+    expected=$'--no-daemon\n'"$mode"$'\n--last'
+    [[ $(<"$HNET_TEST_CODEX_ARGS") == "$expected" ]] || fail "Codex reused the shared runtime."
+  done
+  "$repo_dir/ops/apps/hnetctl/hnetctl" codex --model codex-test 'synthetic prompt'
+  expected=$'--no-daemon\n--model\ncodex-test\nsynthetic prompt'
+  [[ $(<"$HNET_TEST_CODEX_ARGS") == "$expected" ]] || fail "Codex arguments changed."
 }
 
 test_claude_launcher_disables_content_export() {

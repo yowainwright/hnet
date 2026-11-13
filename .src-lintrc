@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "strict": true,
+  "cache": { "max_mib": 0 },
+  "boundaries": {
+    "operations": {
+      "root": "ops",
+      "public": ["apps/hnetctl/hnetctl", "clients/launcher.sh", "scripts/setup.sh", "scripts/validate.sh", "runners/**"]
+    },
+    "tests": {
+      "root": "tests",
+      "allow": ["ops/**"]
+    }
+  }
+}

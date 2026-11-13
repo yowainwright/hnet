@@ -3,3 +3,6 @@
 backups/
 data/
 queues/
+clients.json
+clients.json.*
+enrollments/

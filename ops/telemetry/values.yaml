@@ -46,6 +46,8 @@ grafana:
     type: ClusterIP
     port: 3000
 
+clients: null
+
 gateway:
   service:
     type: ClusterIP

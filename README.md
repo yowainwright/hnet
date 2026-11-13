@@ -26,7 +26,7 @@ clients describe telemetry roles; enrolling a Mac does not join a Kubernetes clu
 1. Install [Homebrew](https://brew.sh), then run on the main Mac:
 
    ```sh
-   brew install yowainwright/tap/hnet
+   brew install yowainwright/tap/hnet jq
    brew install --cask tailscale-app 1password 1password-cli
    ```
 
@@ -42,9 +42,7 @@ clients describe telemetry roles; enrolling a Mac does not join a Kubernetes clu
    | `grafana-admin-password` | Generated password, at least 24 characters |
    | `clickhouse-writer-password` | Different generated password, at least 24 characters |
    | `clickhouse-reader-password` | Different generated password, at least 24 characters |
-   | `mac-studio-token` | Unique random token for the central Mac |
-   | `mac-mini-1-token` | Unique random token for the first edge Mac |
-   | `mac-mini-2-token` | Unique random token for the second edge Mac |
+   | `central-token` | Unique random token for the central Mac |
 
    Each token needs at least 32 characters using letters, digits, `.`, `_`, `~`,
    or `-`. Generated 64-character hexadecimal tokens meet that requirement.
@@ -58,13 +56,18 @@ clients describe telemetry roles; enrolling a Mac does not join a Kubernetes clu
    test -e "$state/.env.mac-studio" || cp \
      "$(brew --prefix hnet)/share/hnet/ops/telemetry/.env.mac-studio.example" \
      "$state/.env.mac-studio"
-   chmod 600 "$state/.env.mac-studio"
-   open -e "$state/.env.mac-studio"
+   test -e "$state/clients.json" || cp \
+     "$(brew --prefix hnet)/share/hnet/ops/telemetry/clients.example.json" \
+     "$state/clients.json"
+   chmod 600 "$state/.env.mac-studio" "$state/clients.json"
+   open -e "$state/.env.mac-studio" "$state/clients.json"
    ```
 
    Set `TAILSCALE_DNS_NAME` to this Mac's full `.ts.net` name from Tailscale,
-   without `https://` or a port. Replace `YOUR_VAULT` in every `op://` reference.
-   Keep the default ports. Save and close the file; keep secret values in 1Password.
+   without `https://` or a port. Replace `YOUR_VAULT` in both files.
+   The inventory holds client names, HTTPS ports, loopback ports, and token
+   references. Keep secret values in 1Password. The `central: true` entry
+   identifies this Mac when enrolling its local collector.
 
 4. Start the services, then configure private Tailscale HTTPS access:
 
@@ -75,8 +78,8 @@ clients describe telemetry roles; enrolling a Mac does not join a Kubernetes clu
    ```
 
    Approve 1Password when prompted. First startup downloads images and can take
-   several minutes. `serve` configures ports `443`, `4318`, `4319`, and `4320`;
-   review existing Tailscale Serve mappings first and complete any requested
+   several minutes. `serve` configures dashboard port `443` and each registered
+   client's HTTPS port. Review existing Tailscale Serve mappings and complete any requested
    HTTPS setup. Do not enable Funnel or router port forwarding.
 
 5. Open `http://localhost:2021/d/agent-telemetry`. Sign in as `admin` with the
@@ -84,8 +87,8 @@ clients describe telemetry roles; enrolling a Mac does not join a Kubernetes clu
    `https://YOUR-CENTRAL-DNS-NAME/d/agent-telemetry`. The dashboard stays empty
    until an enrolled client sends events. To collect this Mac's own shell and
    agent telemetry too, run `hnetctl client-install --install-deps` after central
-   startup. Use the `mac-studio` slot, its token reference, and this Mac's own
-   Tailscale URL on port `4318`. The packaged installer preserves central
+   startup. Use the inventory's central client name (`central` in the example),
+   its token reference, and this Mac's own Tailscale URL on port `4318`. The packaged installer preserves central
    configuration and backups. Then verify from a new terminal with
    `hnetctl client-check --connection`.
 
@@ -93,50 +96,63 @@ clients describe telemetry roles; enrolling a Mac does not join a Kubernetes clu
 
 <!-- Installation and enrollment from ops/apps/hnetctl/client.sh and ops/clients/Brewfile -->
 
-Requires Homebrew, OrbStack or Docker Desktop, Tailscale, 1Password with CLI
-integration enabled, and Codex CLI. The installer can install missing tools:
+On the central Mac, register any safe client name:
+
+```sh
+hnetctl client-add my-laptop
+```
+
+Names start with a letter or digit, contain letters, digits, dots, underscores,
+or dashes, and have at most 63 characters.
+
+Registration allocates unused ports, creates a unique password in a
+`hnet-client-my-laptop` 1Password item in the central client's vault, refreshes
+the collector, and configures private Tailscale HTTPS access. It asks before
+making these changes. `--yes` approves them without the prompt. Repeating the
+command preserves the existing token and ports and retries an incomplete apply.
+The private `clients.json` stores names, ports, and 1Password references.
+
+Transfer `enrollments/my-laptop.env` from the central private telemetry directory
+to the edge Mac. Source checkouts use `ops/telemetry/enrollments/`; Homebrew uses
+`~/.local/share/hnet/ops/telemetry/enrollments/`. Keep the enrollment file private.
+Existing installations import their configured clients, labels, and ports when
+first registering a client. After import, `clients.json` controls client
+credentials and ports; legacy client settings in `.env.mac-studio` are no longer
+used. Adding machines requires configuration changes only.
+
+On the edge Mac, with Homebrew installed:
 
 ```sh
 brew install yowainwright/tap/hnet
-hnetctl client-install --install-deps
+hnetctl client-install --install-deps --config ~/Downloads/my-laptop.env
 ```
 
-Complete the requested app sign-ins, unlock 1Password, and rerun
-`hnetctl client-install`. Connect Tailscale to the central host's tailnet.
-
-For example, enroll the first additional Mac using the existing `mac-mini-1` slot:
-
-| Installer prompt | Example value |
-| --- | --- |
-| Mac label | `mac-mini-1` |
-| Central HTTPS URL | `https://central.YOUR-TAILNET.ts.net:4319` |
-| Token reference | `op://YOUR_VAULT/agent-telemetry/mac-mini-1-token` |
-
-Replace the example hostname and vault with your central host's actual settings.
-On the central host, find the address and token references in its private
-configuration. Enter the reference, never the resolved token.
-
-Use an unused slot and a separate token for every Mac. The second additional Mac
-uses `mac-mini-2`, port `4320`, and its corresponding token. More slots require
-central configuration first; the slot labels do not need to match Mac hardware.
+The installer can install OrbStack/Docker prerequisites, Tailscale, 1Password
+with CLI integration, and Codex CLI. Complete app sign-ins, connect Tailscale to
+the central Mac's tailnet, unlock 1Password, and rerun the same installation
+command. The edge Mac needs access to its credential's 1Password vault.
 
 Setup starts the collector and enables shell and Codex telemetry. Open a new
 terminal to verify:
 
 ```sh
 hnetctl client-check --connection
+codex
 ```
 
-Enable **Start at login** in your Docker app and keep Tailscale connected.
-
-Complete a Codex reply and confirm the new Mac's label and usage in Grafana.
+Complete a reply and confirm that client's label, model, and usage in Grafana.
+Connection probes verify connectivity. The completed reply verifies usage delivery.
+Enable **Start at login** in Docker/OrbStack and keep Tailscale connected.
 Private enrollment lives under `~/.local/share/hnet/ops/telemetry/.env.edge`.
-To enroll without prompts, put the settings in a private file and pass
-`hnetctl client-install --config /path/to/private-enrollment.env`.
+
+Both Macs need a version containing dynamic enrollment. Use a freshly built
+client bundle for unreleased changes. Experimental Helm installations accept the
+same client list through the `clients` value; `hnetctl cluster-bootstrap` passes
+the central inventory and creates the matching Secret entries.
 
 ## Use agents and view usage
 
-<!-- Agent launchers and dashboards from ops/clients/zsh and ops/telemetry/grafana/dashboards/agent-telemetry.json -->
+<!-- Agent launchers from ops/apps/hnetctl/hnetctl and ops/clients/zsh; dashboards from ops/telemetry/grafana/dashboards/agent-telemetry.json -->
 
 After enrollment, use a new terminal:
 
@@ -333,7 +349,7 @@ configuration stop setup rather than being overwritten.
 From a checkout, use `./ops/apps/hnetctl/hnetctl` instead of the packaged
 `hnetctl`. Private central and edge configs live in `ops/telemetry/`; copy the
 corresponding `.env.*.example` first. For manual collection on the central Mac,
-configure `.env.edge` with its `mac-studio` slot, then run `edge-start`,
+configure `.env.edge` with its registered central client, then run `edge-start`,
 `shell-enable`, and `codex-enable`. The checkout must remain available.
 
 Kubernetes support is experimental and requires a checkout. The chart is in
@@ -343,29 +359,11 @@ Set `HNET_KUBE_SECRET` consistently when choosing a custom Secret name.
 Services remain private; client enrollment does not add Kubernetes worker nodes.
 exe.dev deployment is paused.
 
-## Development and releases
+## Lint
 
-<!-- Release tasks from mise.toml and ops/scripts/release.sh -->
-
-From a checkout with Mise configured:
+<!-- Lint commands from mise.toml -->
 
 ```sh
-mise run check
-mise run release-preview
-mise run release:patch:dry-run
-mise run release:patch
+mise run lint
+mise run lint:structure
 ```
-
-Use `release:minor` or `release:major` for larger bumps; each has a
-`:dry-run` task. Bumps use the latest stable tag and skip release candidates.
-`mise run release` keeps the interactive picker; pass `-- vX.Y.Z` for an exact version.
-
-Release from clean `main` matching `origin/main`, after Linux and macOS CI pass.
-The release command selects a version, confirms, tags, and starts signed GitHub
-publication. Stable releases update the Homebrew tap automatically and require
-`HOMEBREW_TAP_TOKEN`; release candidates skip the tap.
-
-For full operations validation, run `tests/ops/apps/hnetctl/hnetctl_test.sh`
-and `./ops/scripts/validate.sh`. Collector validation uses disposable,
-network-disabled containers. Keep credentials, private host details, telemetry,
-queues, and backups out of Git.

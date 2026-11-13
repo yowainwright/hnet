@@ -17,31 +17,6 @@ case "${1:-}" in
   ;;
 esac
 
-fail() {
-  echo "$1" >&2
-  exit "${2:-1}"
-}
-
-cd "$repo_dir"
-git_root=$(git rev-parse --show-toplevel 2>/dev/null) || fail "Run this script inside the hnet repository."
-[[ $git_root == "$repo_dir" ]] || fail "This script must run from the hnet repository."
-
-local_hooks_path=$(git config --local --get core.hooksPath || true)
-if [[ $local_hooks_path == .githooks ]]; then
-  git config --local --unset-all core.hooksPath
-fi
-
-active_hooks_path=$(git config --get core.hooksPath || true)
-[[ -z $active_hooks_path ]] || fail "Unset core.hooksPath before running setup: $active_hooks_path"
-
-git_dir=$(git rev-parse --git-dir)
-case "$git_dir" in
-/*) ;;
-*) git_dir="$repo_dir/$git_dir" ;;
-esac
-hooks_dir="$git_dir/hooks"
-mkdir -p "$hooks_dir"
-
 remove_legacy_pre_push_hook() {
   local hook_path="$hooks_dir/pre-push"
   [[ -f $hook_path ]] || return 0
@@ -75,7 +50,7 @@ cd "$repo_dir"
 
 echo "pre-commit: checking staged changes"
 git --no-pager diff --cached --check
-./ops/scripts/lint.sh --strict
+mise run lint
 echo "pre-commit: passed"
 HOOK
     ;;
@@ -108,6 +83,43 @@ HOOK
   chmod +x "$hook_path"
   echo "Installed $hook_path"
 }
+
+prepare_hooks() {
+  local git_root active_hooks_path
+  cd "$repo_dir"
+  git_root=$(git rev-parse --show-toplevel 2>/dev/null) || fail "Run this script inside the hnet repository."
+  [[ $git_root == "$repo_dir" ]] || fail "This script must run from the hnet repository."
+  clear_legacy_hooks_path
+  active_hooks_path=$(git config --get core.hooksPath || true)
+  [[ -z $active_hooks_path ]] || fail "Unset core.hooksPath before running setup: $active_hooks_path"
+  locate_hooks_directory
+}
+
+fail() {
+  echo "$1" >&2
+  exit "${2:-1}"
+}
+
+clear_legacy_hooks_path() {
+  local local_hooks_path
+  local_hooks_path=$(git config --local --get core.hooksPath || true)
+  if [[ $local_hooks_path == .githooks ]]; then
+    git config --local --unset-all core.hooksPath
+  fi
+}
+
+locate_hooks_directory() {
+  local git_dir
+  git_dir=$(git rev-parse --git-dir)
+  case "$git_dir" in
+  /*) ;;
+  *) git_dir="$repo_dir/$git_dir" ;;
+  esac
+  hooks_dir="$git_dir/hooks"
+  mkdir -p "$hooks_dir"
+}
+
+prepare_hooks
 
 install_hook pre-commit
 install_hook commit-msg
